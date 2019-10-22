@@ -1,7 +1,7 @@
 {
-  "name": "@chainlink/box",
-  "version": "0.6.0",
-  "description": "A Chainlink example in a Truffle box",
+  "name": "fiat-gateway-contracts",
+  "version": "0.1.0",
+  "description": "Fiat gateway Smart Contracts",
   "scripts": {
     "compile": "npx truffle compile",
     "console:dev": "npx truffle console --network cldev",
@@ -17,21 +17,21 @@
   },
   "license": "MIT",
   "dependencies": {
-    "chainlink": "0.6.5",
-    "chainlink-test-helpers": "0.6.0-6",
-    "link_token": "^1.0.6",
-    "openzeppelin-solidity": "^1.12.0"
+    "chainlink": "0.7.5",
+    "chainlink-test-helpers": "0.6.0",
+    "link_token": "chatch/LinkTokenv0.5",
+    "@openzeppelin/contracts": "^2.3.0"
   },
   "devDependencies": {
     "@chainlink/eslint-config": "0.0.1",
     "@chainlink/prettier-config": "0.0.1",
     "depcheck": "^0.8.3",
-    "eslint": "^6.3.0",
+    "eslint": "^6.5.1",
     "prettier": "^1.18.2",
-    "solc": "0.4.24",
-    "solhint": "^2.1.0",
-    "truffle": "^5.0.25",
-    "truffle-hdwallet-provider": "^1.0.8"
+    "solc": "0.5.12",
+    "solhint": "^2.3.0",
+    "truffle": "^5.0.41",
+    "truffle-hdwallet-provider": "^1.0.17"
   },
   "prettier": "@chainlink/prettier-config"
 }

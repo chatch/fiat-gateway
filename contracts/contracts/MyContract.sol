@@ -1,7 +1,7 @@
-pragma solidity 0.4.24;
+pragma solidity >= 0.5.8;
 
-import "chainlink/contracts/ChainlinkClient.sol";
-import "openzeppelin-solidity/contracts/ownership/Ownable.sol";
+import "chainlink/v0.5/contracts/ChainlinkClient.sol";
+import "@openzeppelin/contracts/ownership/Ownable.sol";
 
 /**
  * @title MyContract is an example contract which requests data from
@@ -49,15 +49,15 @@ contract MyContract is ChainlinkClient, Ownable {
     address _oracle,
     bytes32 _jobId,
     uint256 _payment,
-    string _url,
-    string _path,
+    string memory _url,
+    string memory _path,
     int256 _times
   )
     public
     onlyOwner
     returns (bytes32 requestId)
   {
-    Chainlink.Request memory req = buildChainlinkRequest(_jobId, this, this.fulfill.selector);
+    Chainlink.Request memory req = buildChainlinkRequest(_jobId, address(this), this.fulfill.selector);
     req.add("url", _url);
     req.add("path", _path);
     req.addInt("times", _times);

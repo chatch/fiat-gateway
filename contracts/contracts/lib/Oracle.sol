@@ -1,3 +1,3 @@
-pragma solidity 0.4.24;
+pragma solidity >= 0.5.8;
 
-import "chainlink/contracts/Oracle.sol";
+import "chainlink/v0.5/contracts/Oracle.sol";
