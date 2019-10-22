@@ -1,2 +1,2 @@
-# chainlink-external-adapter-rates
-Chainlink external adapter fetching CoinHatch Australia rates
+# fiat-gateway
+Fiat Gateway
