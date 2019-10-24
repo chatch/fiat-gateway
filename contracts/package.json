@@ -1,0 +1,21 @@
+{
+  "name": "fiat-gateway-contracts",
+  "version": "0.1.0",
+  "description": "Fiat gateway smart contracts",
+  "scripts": {
+    "compile": "npx truffle compile",
+    "lint": "solium -d contracts",
+    "test": "npx truffle test"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "chainlink": "0.7.5",
+    "@openzeppelin/contracts": "^2.3.0"
+  },
+  "devDependencies": {
+    "chai": "^4.2.0",
+    "openzeppelin-test-helpers": "^0.5.1",
+    "solium": "^1.2.5",
+    "truffle": "^5.0.41"
+  }
+}
