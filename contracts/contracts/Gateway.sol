@@ -1,4 +1,4 @@
-pragma solidity ^0.5.12;
+pragma solidity >=0.5.8 <0.6.0;
 
 import "./chainlink/ChainlinkClient.sol";
 import "./chainlink/vendor/Ownable.sol";
@@ -26,12 +26,12 @@ contract Gateway is ChainlinkClient, Ownable {
 
 
     /* ------------------------------------------------------
-     *  Dealers
+     *  Dealers - TODO split off to registry contract
      * ------------------------------------------------------ */
 
     struct Dealer {
-        address admin; // account registering and maintaining the record
-        address oracle;
+        address adminAddr; // account registering and maintaining the record
+        address oracleAddr;
         string jobId;
         bool active;
     }
@@ -68,23 +68,17 @@ contract Gateway is ChainlinkClient, Ownable {
      * ------------------------------------------------------ */
 
     event LogGatewayDealerRegistered(
-        bytes32 dealerId,
-        address admin,
-        address oracleId,
+        bytes32 indexed dealerId,
+        address adminAddr,
+        address oracleAddr,
         string jobId
     );
     event LogGatewayDealerBuyCryptoOfferCreated(
-        bytes32 offerId,
+        bytes32 indexed offerId,
         CryptoToken crypto,
         FiatCurrency fiat,
         uint256 price
     );
-
-
-    /// @dev Set owner and chainlink LINK address
-    constructor() public Ownable() {
-        setPublicChainlinkToken();
-    }
 
 
     /* ------------------------------------------------------
@@ -95,12 +89,27 @@ contract Gateway is ChainlinkClient, Ownable {
     string constant REASON_OFFER_ALREADY_PLACED = "Offer already placed";
 
 
+    /**
+     * @notice Deploy the contract with a specified address for the LINK
+     * and Oracle contract addresses
+     * @dev Sets the storage for the specified addresses
+     * @param _link The address of the LINK token contract
+     */
+    constructor(address _link) public Ownable() {
+        if (_link == address(0)) {
+            setPublicChainlinkToken();
+        } else {
+            setChainlinkToken(_link);
+        }
+    }
+
+
     /* ------------------------------------------------------
      *    Dealer Functions
      * ------------------------------------------------------ */
 
     function dealerRegister(
-        address _oracleId,
+        address _oracleAddr,
         string calldata _jobId
     )
         external
@@ -108,24 +117,30 @@ contract Gateway is ChainlinkClient, Ownable {
         returns (bytes32 dealerId)
     {
         address admin = msg.sender;
-        dealerId = keccak256(abi.encodePacked(admin, _oracleId, _jobId));
-        dealers[dealerId] = Dealer(admin, _oracleId, _jobId, true);
-        emit LogGatewayDealerRegistered(dealerId, admin, _oracleId, _jobId);
+        dealerId = keccak256(abi.encodePacked(admin, _oracleAddr, _jobId));
+        dealers[dealerId] = Dealer(admin, _oracleAddr, _jobId, true);
+        emit LogGatewayDealerRegistered(dealerId, admin, _oracleAddr, _jobId);
     }
 
     function dealerBuyCryptoOfferCreate(
-        CryptoToken _crypto,
-        FiatCurrency _fiat,
+        // TODO: offer per pair:
+
+        // CryptoToken _crypto,
+        // FiatCurrency _fiat,
         uint256 _price
     )
         external
         // TODO: msg.sender is a registered dealer
         returns (bytes32 offerId)
     {
+        // hard code for now:
+        CryptoToken _crypto = CryptoToken.ETH;
+        FiatCurrency _fiat = FiatCurrency.USD;
 
         offerId = keccak256(
             abi.encodePacked(msg.sender, _crypto, _fiat, _price)
         );
+        
         // TODO: offer doesn't exist already
         buyOffers[offerId] = Offer(_crypto, _fiat, _price);
         return offerId;
