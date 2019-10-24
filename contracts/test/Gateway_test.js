@@ -9,16 +9,13 @@ contract('Gateway', accounts => {
   const Gateway = artifacts.require('Gateway.sol')
 
   const defaultAccount = accounts[0]
-  const oracleNode = accounts[1]
-  const stranger = accounts[2]
-  const consumer = accounts[3]
+  const oracleAddr = accounts[1]
+  const dealer = accounts[2]
+  const seller = accounts[3]
 
-  // These parameters are used to validate the data was received
-  // on the deployed oracle contract. The Job ID only represents
-  // the type of data, but will not work on a public testnet.
-  // For the latest JobIDs, visit our docs here:
-  // https://docs.chain.link/docs/testnet-oracles
-  const jobId = web3.utils.toHex('4c7b7ffb66b344fbaa64995af81e355a')
+  const jobIdStr = '4c7b7ffb66b344fbaa64995af81e355a'
+  const jobIdHex = web3.utils.toHex(jobIdStr)
+
   const url =
     'https://min-api.cryptocompare.com/data/price?fsym=ETH&tsyms=USD,EUR,JPY'
   const path = 'USD'
@@ -27,14 +24,32 @@ contract('Gateway', accounts => {
   // Represents 1 LINK for testnet requests
   const payment = web3.utils.toWei('1')
 
-  let link, oc, cc
+  let link, oracle, gate
 
   beforeEach(async () => {
     link = await LinkToken.new()
-    oc = await Oracle.new(link.address, { from: defaultAccount })
-    cc = await Gateway.new(link.address, { from: consumer })
-    await oc.setFulfillmentPermission(oracleNode, true, {
+    oracle = await Oracle.new(link.address, { from: defaultAccount })
+    gate = await Gateway.new(link.address, { from: seller })
+    await oracle.setFulfillmentPermission(oracleAddr, true, {
       from: defaultAccount,
+    })
+  })
+
+
+  describe.only('#dealerRegister', () => {
+    it('success', async () => {
+      const tx = await gate.dealerRegister(oracleAddr, jobIdHex, {
+        from: dealer,
+      })
+
+      const dealerId = tx.logs[0].args.dealerId
+      const dealerRec = await gate.dealers.call(dealerId)
+      console.log(dealerRec)
+
+      assert.equal(dealerRec.adminAddr, dealer, 'dealer should be admin')
+      assert.equal(dealerRec.oracleAddr, oracleAddr, 'dealer oracleAddr')
+      assert.equal(web3.utils.hexToString(dealerRec.jobId), jobIdStr, 'dealer jobId')
+      assert.isTrue(dealerRec.active, 'dealer active')
     })
   })
 
@@ -42,8 +57,8 @@ contract('Gateway', accounts => {
   //   context('without LINK', () => {
   //     it('reverts', async () => {
   //       await expectRevert.unspecified(
-  //         cc.createRequestTo(oc.address, jobId, payment, url, path, times, {
-  //           from: consumer,
+  //         gate.createRequestTo(oracle.address, jobIdHex, payment, url, path, times, {
+  //           from: seller,
   //         }),
   //       )
   //     })
@@ -53,22 +68,22 @@ contract('Gateway', accounts => {
   //     let request
 
   //     beforeEach(async () => {
-  //       await link.transfer(cc.address, web3.utils.toWei('1', 'ether'))
+  //       await link.transfer(gate.address, web3.utils.toWei('1', 'ether'))
   //     })
 
   //     context('sending a request to a specific oracle contract address', () => {
   //       it('triggers a log event in the new Oracle contract', async () => {
-  //         const tx = await cc.createRequestTo(
-  //           oc.address,
-  //           jobId,
+  //         const tx = await gate.createRequestTo(
+  //           oracle.address,
+  //           jobIdHex,
   //           payment,
   //           url,
   //           path,
   //           times,
-  //           { from: consumer },
+  //           { from: seller },
   //         )
   //         request = h.decodeRunRequest(tx.receipt.rawLogs[3])
-  //         assert.equal(oc.address, tx.receipt.rawLogs[3].address)
+  //         assert.equal(oracle.address, tx.receipt.rawLogs[3].address)
   //         assert.equal(
   //           request.topic,
   //           web3.utils.keccak256(
@@ -86,22 +101,22 @@ contract('Gateway', accounts => {
   //   let request
 
   //   beforeEach(async () => {
-  //     await link.transfer(cc.address, web3.utils.toWei('1', 'ether'))
-  //     const tx = await cc.createRequestTo(
-  //       oc.address,
-  //       jobId,
+  //     await link.transfer(gate.address, web3.utils.toWei('1', 'ether'))
+  //     const tx = await gate.createRequestTo(
+  //       oracle.address,
+  //       jobIdHex,
   //       payment,
   //       url,
   //       path,
   //       times,
-  //       { from: consumer },
+  //       { from: seller },
   //     )
   //     request = h.decodeRunRequest(tx.receipt.rawLogs[3])
-  //     await h.fulfillOracleRequest(oc, request, response, { from: oracleNode })
+  //     await h.fulfillOracleRequest(oracle, request, response, { from: oracleAddr })
   //   })
 
   //   it('records the data given to it by the oracle', async () => {
-  //     const currentPrice = await cc.data.call()
+  //     const currentPrice = await gate.data.call()
   //     assert.equal(
   //       web3.utils.toHex(currentPrice),
   //       web3.utils.padRight(expected, 64),
@@ -117,8 +132,8 @@ contract('Gateway', accounts => {
 
   //     it('does not accept the data provided', async () => {
   //       await expectRevert.unspecified(
-  //         h.fulfillOracleRequest(oc, request, response, {
-  //           from: oracleNode,
+  //         h.fulfillOracleRequest(oracle, request, response, {
+  //           from: oracleAddr,
   //         }),
   //       )
   //     })
@@ -127,7 +142,7 @@ contract('Gateway', accounts => {
   //   context('when called by anyone other than the oracle contract', () => {
   //     it('does not accept the data provided', async () => {
   //       await expectRevert.unspecified(
-  //         cc.fulfill(request.id, response, { from: stranger }),
+  //         gate.fulfill(request.id, response, { from: dealer }),
   //       )
   //     })
   //   })
@@ -137,15 +152,15 @@ contract('Gateway', accounts => {
   //   let request
 
   //   beforeEach(async () => {
-  //     await link.transfer(cc.address, web3.utils.toWei('1', 'ether'))
-  //     const tx = await cc.createRequestTo(
-  //       oc.address,
-  //       jobId,
+  //     await link.transfer(gate.address, web3.utils.toWei('1', 'ether'))
+  //     const tx = await gate.createRequestTo(
+  //       oracle.address,
+  //       jobIdHex,
   //       payment,
   //       url,
   //       path,
   //       times,
-  //       { from: consumer },
+  //       { from: seller },
   //     )
   //     request = h.decodeRunRequest(tx.receipt.rawLogs[3])
   //   })
@@ -153,12 +168,12 @@ contract('Gateway', accounts => {
   //   context('before the expiration time', () => {
   //     it('cannot cancel a request', async () => {
   //       await expectRevert(
-  //         cc.cancelRequest(
+  //         gate.cancelRequest(
   //           request.id,
   //           request.payment,
   //           request.callbackFunc,
   //           request.expiration,
-  //           { from: consumer },
+  //           { from: seller },
   //         ),
   //         'Request is not expired',
   //       )
@@ -173,12 +188,12 @@ contract('Gateway', accounts => {
   //     context('when called by a non-owner', () => {
   //       it('cannot cancel a request', async () => {
   //         await expectRevert.unspecified(
-  //           cc.cancelRequest(
+  //           gate.cancelRequest(
   //             request.id,
   //             request.payment,
   //             request.callbackFunc,
   //             request.expiration,
-  //             { from: stranger },
+  //             { from: dealer },
   //           ),
   //         )
   //       })
@@ -186,12 +201,12 @@ contract('Gateway', accounts => {
 
   //     context('when called by an owner', () => {
   //       it('can cancel a request', async () => {
-  //         await cc.cancelRequest(
+  //         await gate.cancelRequest(
   //           request.id,
   //           request.payment,
   //           request.callbackFunc,
   //           request.expiration,
-  //           { from: consumer },
+  //           { from: seller },
   //         )
   //       })
   //     })
@@ -200,21 +215,21 @@ contract('Gateway', accounts => {
 
   describe('#withdrawLink', () => {
     beforeEach(async () => {
-      await link.transfer(cc.address, web3.utils.toWei('1', 'ether'))
+      await link.transfer(gate.address, web3.utils.toWei('1', 'ether'))
     })
 
     context('when called by a non-owner', () => {
       it('cannot withdraw', async () => {
-        await expectRevert.unspecified(cc.withdrawLink({ from: stranger }))
+        await expectRevert.unspecified(gate.withdrawLink({ from: dealer }))
       })
     })
 
     context('when called by the owner', () => {
       it('transfers LINK to the owner', async () => {
-        const beforeBalance = await link.balanceOf(consumer)
+        const beforeBalance = await link.balanceOf(seller)
         assert.equal(beforeBalance, '0')
-        await cc.withdrawLink({ from: consumer })
-        const afterBalance = await link.balanceOf(consumer)
+        await gate.withdrawLink({ from: seller })
+        const afterBalance = await link.balanceOf(seller)
         assert.equal(afterBalance, web3.utils.toWei('1', 'ether'))
       })
     })

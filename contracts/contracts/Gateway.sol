@@ -114,6 +114,7 @@ contract Gateway is ChainlinkClient, Ownable {
     )
         external
         // TODO: check not already exists
+        // TODO: require a security deposit
         returns (bytes32 dealerId)
     {
         address admin = msg.sender;
