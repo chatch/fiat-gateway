@@ -15,13 +15,13 @@ contract Gateway is ChainlinkClient, Ownable {
      * ------------------------------------------------------ */
 
     enum CryptoToken {
-        ETH,
-        DAI
+        DAI,
+        ETH
     }
 
     enum FiatCurrency {
-        USD,
-        AUD
+        AUD,
+        USD
     }
 
 
@@ -57,8 +57,11 @@ contract Gateway is ChainlinkClient, Ownable {
         // TODO: add these and change to a structure that supports any currency:
 
         // uint256 ethReserve;
-        // uint256 usdReserve;
+        // uint256 audReserve;
     }
+
+    // TODO: move this into offers struct - result per Offer
+    bool public payoutResult;
 
     mapping(bytes32 => Offer) buyOffers;
 
@@ -74,12 +77,14 @@ contract Gateway is ChainlinkClient, Ownable {
         string jobId
     );
     event LogGatewayDealerBuyCryptoOfferCreated(
+        bytes32 indexed dealerId,
         bytes32 indexed offerId,
         CryptoToken crypto,
         FiatCurrency fiat,
         uint256 price
     );
-
+    event LogPayoutFulfilled(bytes32 requestId, bool result);
+    
 
     /* ------------------------------------------------------
      *  Reason messages
@@ -108,6 +113,10 @@ contract Gateway is ChainlinkClient, Ownable {
      *    Dealer Functions
      * ------------------------------------------------------ */
 
+    /// @notice Dealer registers in the market
+    /// @param _oracleAddr Address of the dealers pay out Oracle
+    /// @param _jobId JobID for payouts at the _oracleAddr
+    /// @return bytes32 dealerId Dealer ID for the new dealer
     function dealerRegister(
         address _oracleAddr,
         string calldata _jobId
@@ -123,6 +132,11 @@ contract Gateway is ChainlinkClient, Ownable {
         emit LogGatewayDealerRegistered(dealerId, admin, _oracleAddr, _jobId);
     }
 
+    /// @notice Dealer places an offer for a pair
+    /// param _crypto CryptoToken to buy/sell
+    /// param _fiat FiatCurrency to buy sell
+    /// @param _price Price for market pair adjusted by 10 decimals (multiplied by 10^10)
+    /// @return bytes32 offerId for the new offer
     function dealerBuyCryptoOfferCreate(
         // TODO: offer per pair:
 
@@ -136,14 +150,23 @@ contract Gateway is ChainlinkClient, Ownable {
     {
         // hard code for now:
         CryptoToken _crypto = CryptoToken.ETH;
-        FiatCurrency _fiat = FiatCurrency.USD;
+        FiatCurrency _fiat = FiatCurrency.AUD;
 
         offerId = keccak256(
             abi.encodePacked(msg.sender, _crypto, _fiat, _price)
         );
-        
+
         // TODO: offer doesn't exist already
         buyOffers[offerId] = Offer(_crypto, _fiat, _price);
+
+        emit LogGatewayDealerBuyCryptoOfferCreated(
+            0x0,  // TODO: dealer id - lookup from msg.sender
+            offerId,
+            _crypto,
+            _fiat,
+            _price
+        );
+
         return offerId;
     }
 
@@ -158,50 +181,64 @@ contract Gateway is ChainlinkClient, Ownable {
     /// Sell crypto for fiat. A trader takes a dealers offer for a given amount.
     /// @notice Sells crypto for an offer
     function sellCrypto(
-        uint256 ethAmount,
-        bytes32 payoutIdEncrypted
+        bytes32 dealerId,
+        bytes32 offerId,
+        uint256 amount,
+        string calldata receiver
+        // TODO: use an encrypted receiver
+        // bytes32 receiver
     )
         external
         // dealerIsActive(sellOrder.oracle)
-        returns (bytes32 sellId)
     {
-        // implement me
+        // TODO: add checks
+        Dealer memory dealer = dealers[dealerId];
+        // Offer memory offer = offers[offerId];
+
+        // TODO: dollarAmount = amount / offer.price
+        uint256 dollarAmount = 2;
+
+        payout(dealer.oracleAddr, dealer.jobId, dollarAmount, receiver);
     }
 
-    function sellFilled(
-        bytes32 sellOrderId,
-        bytes32 payoutIdEncrypted
+    /* ------------------------------------------------------
+     *    Payout Functions
+     * ------------------------------------------------------ */
+
+    function payout(
+        address _oracle,
+        string memory _jobId,
+        uint amount,
+        string memory receiver
     )
-        external
-        // onlyOracle(sellOrder.oracle)
+        public
+        onlyOwner
     {
-        // implement me
+        Chainlink.Request memory req = buildChainlinkRequest(
+                stringToBytes32(_jobId),
+                address(this),
+                this.fulfillPayout.selector
+        );
+        req.add("method", "sendPayout");
+        req.addUint("amount", amount);
+        req.add("currency", "AUD");
+        req.add("receiver", receiver);
+        sendChainlinkRequestTo(_oracle, req, ORACLE_PAYMENT);
     }
 
 
-    // function pay(address _oracle, string memory _jobId)
-    //     public
-    //     onlyOwner
-    // {
-    //     Chainlink.Request memory req = buildChainlinkRequest(
-    //             stringToBytes32(_jobId),
-    //             address(this),
-    //             this.fulfillEthereumChange.selector
-    //     );
-    //     req.add("get", "https://min-api.cryptocompare.com/data/pricemultifull?fsyms=ETH&tsyms=USD");
-    //     req.add("path", "RAW.ETH.USD.CHANGEPCTDAY");
-    //     req.addInt("times", 1000000000);
-    //     sendChainlinkRequestTo(_oracle, req, ORACLE_PAYMENT);
-    // }
+    function fulfillPayout(bytes32 _requestId, bool _result)
+        public
+        recordChainlinkFulfillment(_requestId)
+    {
+        emit LogPayoutFulfilled(_requestId, _result);
+        payoutResult = _result;
+    }
 
 
-    // function fulfillEthereumPrice(bytes32 _requestId, uint256 _price)
-    //     public
-    //     recordChainlinkFulfillment(_requestId)
-    // {
-    //     emit RequestEthereumPriceFulfilled(_requestId, _price);
-    //     currentPrice = _price;
-    // }
+    /* ------------------------------------------------------
+     *    Chainlink Functions
+     * ------------------------------------------------------ */
 
     function getChainlinkToken() public view returns (address) {
         return chainlinkTokenAddress();
