@@ -13,8 +13,8 @@ provider:
   timeout: 15
 
 functions:
-  rates:
-    handler: handler.index
+  adapter:
+    handler: dist/index.handler
     events:
       - http:
           method: get

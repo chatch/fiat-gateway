@@ -24,6 +24,7 @@
       "ban-keywords",
       "check-format",
       "allow-leading-underscore",
+      "allow-snake-case",
       "allow-pascal-case"
     ]
   }

@@ -1,4 +1,4 @@
-paypal.env
+paypal.test.env
 dist
 node_modules
 .serverless

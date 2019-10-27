@@ -1,0 +1,4 @@
+#!/bin/sh
+#SLS_DEBUG=* 
+sls invoke local --verbose --function adapter \
+  -d '{ "id": 1, "data": { "method": "sendPayout", "amount": 10, "currency": "AUD", "receiver": "me@paypal.com" } }'

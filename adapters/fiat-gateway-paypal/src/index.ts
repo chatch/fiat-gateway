@@ -1,8 +1,6 @@
+import EthCrypto, { Encrypted } from 'eth-crypto'
+import IPFS from 'ipfs-http-client'
 import * as paypal from 'paypal-rest-sdk'
-
-/* Disable variable-name rule as some api props use '_' seperators in names */
-
-/* tslint:disable:variable-name */
 
 class Response {
   jobRunID: string
@@ -21,12 +19,12 @@ export class Request {
   method?: string
 }
 
-export class GetRequest extends Request {
+export class GetPayoutRequest extends Request {
   payout_id: string
   type?: string
 }
 
-export class SendRequest extends Request {
+export class SendPayoutRequest extends Request {
   amount: string
   receiver: string
   currency?: string
@@ -37,13 +35,30 @@ export class SendRequest extends Request {
   email_message?: string
 }
 
+export class NewMakerRequest extends Request {
+  public_account: string
+  maker_id: string
+  fiat_currency: string
+  token: string
+  reserve_amount: number
+  api_creds_ipfs_hash: string
+}
+
+export class BuyCryptoOrderRequest extends Request {
+  buyer_address: string
+  orderId: string
+  orderAmount: number
+  fiatCurrency: string
+  token: string
+}
+
 paypal.configure({
   mode: process.env.STAGE === 'live' ? 'live' : 'sandbox',
   client_id: process.env.CLIENT_ID,
   client_secret: process.env.CLIENT_SECRET,
 })
 
-const sendPayout = async (data: SendRequest) => {
+const sendPayout = async (data: SendPayoutRequest) => {
   return new Promise((resolve, reject) => {
     if (!('amount' in data) || !('receiver' in data)) {
       return reject({ statusCode: 400, data: 'missing required parameters' })
@@ -81,7 +96,7 @@ const sendPayout = async (data: SendRequest) => {
   })
 }
 
-const getPayout = async (data: GetRequest) => {
+const getPayout = async (data: GetPayoutRequest) => {
   return new Promise((resolve, reject) => {
     if (!('payout_id' in data)) {
       return reject({ statusCode: 400, data: 'missing required parameters' })
@@ -109,43 +124,81 @@ const getPayout = async (data: GetRequest) => {
   })
 }
 
-export const createRequest = async (input: JobRequest) => {
+const newMaker = async (data: NewMakerRequest) => {
+  return new Promise(async (resolve, reject) => {
+    console.log(`newMaker req: ${JSON.stringify(data, null, 2)}`)
+
+    const ipfs = IPFS('ipfs.infura.io', '5001', {protocol: 'https'})
+    const ipfsRsp = await ipfs.get(data.api_creds_ipfs_hash)
+    const apiCredsBuf = ipfsRsp[0].content
+    const apiCreds = JSON.parse(apiCredsBuf.toString())
+    console.log(`got maker creds: ${JSON.stringify(apiCreds)} @ ${Date.now()}`)
+
+    return resolve({ statusCode: 201, data: {makerId: data.maker_id} })
+  })
+}
+
+const buyCryptoOrder = async (data: BuyCryptoOrderRequest) => {
+  return new Promise((resolve, reject) => {
+    throw new Error('not yet implemented')
+  })
+}
+
+const createRequest = async (input: JobRequest) => {
+  console.log(`input: ${JSON.stringify(input, null, 2)}`)
+
   return new Promise((resolve, reject) => {
     const data = input.data
-    const method = process.env.API_METHOD || data.method || ''
-    console.log(`${method} request: ${JSON.stringify(data, null, 2)}`)
+    const method = data.method || ''
+
+    const handlePayoutResponse = (response: any) => {
+      console.log(
+      `${method} response: ${JSON.stringify(response, null, 2)}`,
+        )
+      response.data.result =
+        response.data.batch_header.payout_batch_id || ''
+      return resolve(response)
+    }
+
+    const handleResponse = (response: any) => {
+      console.log(
+      `${method} response: ${JSON.stringify(response, null, 2)}`,
+        )
+      return resolve(response)
+    }
+
     switch (method.toLowerCase()) {
       case 'sendpayout':
-        sendPayout(data as SendRequest)
-          .then((response: any) => {
-            console.log(
-              `${method} response: ${JSON.stringify(response, null, 2)}`,
-            )
-            response.data.result =
-              response.data.batch_header.payout_batch_id || ''
-            return resolve(response)
-          })
+        sendPayout(data as SendPayoutRequest)
+          .then(handlePayoutResponse)
           .catch(reject)
         break
+
       case 'getpayout':
-        getPayout(data as GetRequest)
-          .then((response: any) => {
-            console.log(
-              `${method} response: ${JSON.stringify(response, null, 2)}`,
-            )
-            response.data.result =
-              response.data.batch_header.payout_batch_id || ''
-            return resolve(response)
-          })
+        getPayout(data as GetPayoutRequest)
+          .then(handlePayoutResponse)
           .catch(reject)
         break
+
+      case 'newmaker':
+        newMaker(data as NewMakerRequest)
+          .then(handleResponse)
+          .catch(reject)
+        break
+
+      case 'buycryptoorder':
+        buyCryptoOrder(data as BuyCryptoOrderRequest)
+          .then(handleResponse)
+          .catch(reject)
+        break
+
       default:
         return reject({ statusCode: 400, data: 'Invalid method' })
     }
   })
 }
 
-export const requestWrapper = async (req: JobRequest): Promise<Response> => {
+const requestWrapper = async (req: JobRequest): Promise<Response> => {
   return new Promise<Response>((resolve) => {
     const response = { jobRunID: req.id || '' } as Response
     createRequest(req)
@@ -155,26 +208,33 @@ export const requestWrapper = async (req: JobRequest): Promise<Response> => {
         response.statusCode = statusCode
         resolve(response)
       })
-      .catch(({ statusCode, data }) => {
+      .catch((err) => {
+        console.error(`createRequest failure: ${err.message}`)
+        console.error(`stack: ${err.stack}`)
+
+        const { statusCode, data } = err
         response.status = 'errored'
         response.error = data
         response.statusCode = statusCode
+
         resolve(response)
       })
   })
 }
 
 // createRequest() wrapper for GCP
-export const gcpservice = async (req: any = {}, res: any): Promise<any> => {
+const gcpservice = async (req: any = {}, res: any): Promise<any> => {
   const response = await requestWrapper(req.body as JobRequest)
   res.status(response.statusCode).send(response)
 }
 
 // createRequest() wrapper for AWS Lambda
-export const handler = async (
+const handler = async (
   event: JobRequest,
   context: any = {},
   callback: (error: any, result: any) => void,
 ): Promise<any> => {
   callback(null, await requestWrapper(event))
 }
+
+export {handler, gcpservice, requestWrapper, createRequest}
