@@ -1,3 +1,4 @@
+paypal.env
 dist
 node_modules
 .serverless

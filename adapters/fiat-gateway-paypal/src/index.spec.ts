@@ -1,5 +1,8 @@
 import { assert } from 'chai'
+import dotenv from 'dotenv'
 import 'mocha'
+import path from 'path'
+
 import {
   GetRequest,
   JobRequest,
@@ -7,6 +10,8 @@ import {
   requestWrapper,
   SendRequest,
 } from './index'
+
+dotenv.config({ path: path.resolve(process.cwd(), './paypal.env') })
 
 describe('create request', () => {
   context('requests data', () => {

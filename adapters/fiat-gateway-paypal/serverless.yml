@@ -19,3 +19,7 @@ functions:
       - http:
           method: get
           path: "/"
+    environment:
+      CLIENT_ID: ${ssm:/${self:custom.stage}/paypal-client-id}
+      CLIENT_SECRET: ${ssm:/${self:custom.stage}/paypal-client-secret}
+      STAGE: ${self:custom.stage}
