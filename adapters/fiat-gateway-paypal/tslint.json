@@ -1,0 +1,30 @@
+{
+  "extends": ["tslint:recommended"],
+  "linterOptions": {
+    "exclude": ["**/dist/**", "**/node_modules/**"]
+  },
+  "rules": {
+    "max-line-length": [
+      true,
+      {
+        "limit": 80
+      }
+    ],
+    "max-classes-per-file": false,
+    "member-access": false,
+    "no-console": false,
+    "no-string-literal": false,
+    "object-literal-sort-keys": false,
+    "only-arrow-functions": false,
+    "ordered-imports": true,
+    "quotemark": [true, "single", "jsx-double", "avoid-escape"],
+    "semicolon": [true, "never", "ignore-bound-class-methods"],
+    "variable-name": [
+      true,
+      "ban-keywords",
+      "check-format",
+      "allow-leading-underscore",
+      "allow-pascal-case"
+    ]
+  }
+}

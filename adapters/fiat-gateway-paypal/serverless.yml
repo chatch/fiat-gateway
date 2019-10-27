@@ -1,0 +1,21 @@
+service: fiat-gateway-ea-paypal
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+
+provider:
+  name: aws
+  profile: chatch-serverless
+  region: ap-southeast-2
+  runtime: nodejs10.x
+  stage: dev
+  memorySize: 128
+  timeout: 15
+
+functions:
+  rates:
+    handler: handler.index
+    events:
+      - http:
+          method: get
+          path: "/"
