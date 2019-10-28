@@ -9,197 +9,308 @@ import "./chainlink/vendor/Ownable.sol";
 contract Gateway is ChainlinkClient, Ownable {
     uint256 constant private ORACLE_PAYMENT = 1 * LINK;
 
-    /* ------------------------------------------------------
-     *  Supported Currencies
-     *  TODO: move to an updatable list
-     * ------------------------------------------------------ */
-
-    enum CryptoToken {
-        DAI,
-        ETH
-    }
-
-    enum FiatCurrency {
-        AUD,
-        USD
-    }
+    // Denotes Native ETH - NOTE: KyberNetwork also uses this to represent ETH
+    address constant public ETH_ADDRESS = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE;
 
 
     /* ------------------------------------------------------
-     *  Dealers - TODO split off to registry contract
+     *  Makers - a maker is a liquidity provider that exist
+     *    per combo of fiat/crypto pair and FiatPaymentMethod
      * ------------------------------------------------------ */
 
-    struct Dealer {
-        address adminAddr; // account registering and maintaining the record
-        address oracleAddr;
-        string jobId;
+    struct Maker {
+        address ethAddr; // account registering and maintaining the record
+        uint256 fiatPaymentMethodIdx;
+        address crypto;    // ERC20 address or ETH_ADDRESS
+        string fiat;       // ISO 4217 currency code
         bool active;
     }
 
-    /* Dealer ID to Dealer details*/
-    mapping(bytes32 => Dealer) public dealers;
+    /*
+     * Maker ID [keccak256(ethAddr, fiatPaymentMethodIdx, crypto, fiat to)]
+     *   => Maker record
+     */
+
+    mapping(bytes32 => Maker) public makers;
 
 
     /* ------------------------------------------------------
-     *  Offers
+     *  Fiat Payments - a payment method and it's oracle
+     *    eg. Paypal, WeChat Pay, SEPA, ... would each have
+     *    one record here and one deployed Oracle handling
+     *    the network interactions
      * ------------------------------------------------------ */
 
-    struct Offer {
-        // Currency Pair
-        CryptoToken crypto;
-        FiatCurrency fiat;
+    struct FiatPaymentMethod {
+        string displayName;
+        address oracleAddr;
 
-        // fiat per crypto adjusted by 10 decimals
-        // (eg. USD for ETH price $222.99 would be: 2229900000000)
-        uint256 price;
-
-        // reserve amounts
-        // TODO: add these and change to a structure that supports any currency:
-
-        // uint256 ethReserve;
-        // uint256 audReserve;
+        // JobIds of adapter calls
+        string newMakerJobId;
+        string buyCryptoOrderJobId;
+        string buyCryptoOrderPayedJobId;
     }
 
-    // TODO: move this into offers struct - result per Offer
-    bool public payoutResult;
+    /* All registered FiatPaymentMethods */
+    FiatPaymentMethod[] public fiatPaymentMethods;
 
-    mapping(bytes32 => Offer) buyOffers;
+
+    /* ------------------------------------------------------
+     *  Orders - a buy or sell order
+     * ------------------------------------------------------ */
+
+    struct Order {
+        address taker;
+
+        // Currency Pair
+        address crypto; // ERC20 address or ETH_ADDRESS
+        string fiat;    // ISO 4217 currency code
+
+        // price in Fiat per 1 uint of crypto adjusted by 10 decimals
+        // (eg. USD for ETH price $222.99 would be: 2229900000000)
+        uint256 amount;
+
+        // FiatPaymentMethod
+        uint256 fiatPaymentMethodIdx;
+    }
+
+    /*
+     * Order ID [keccack256(taker, _crypto, _fiat, _amount)]
+     *   => Order
+     */
+
+    mapping(bytes32 => Order) public buyOrders;
+    mapping(bytes32 => Order) public sellOrders;
+
+    // TODO: move this into orders struct - result per Order
+    bool public payoutResult;
 
 
     /* ------------------------------------------------------
      *  Events
      * ------------------------------------------------------ */
 
-    event LogGatewayDealerRegistered(
-        bytes32 indexed dealerId,
-        address adminAddr,
-        address oracleAddr,
-        string jobId
+    event LogGatewayFiatPaymentMethodAdded(
+        string indexed name,
+        address indexed oracle,
+        uint256 indexed methodIdx
     );
-    event LogGatewayDealerBuyCryptoOfferCreated(
-        bytes32 indexed dealerId,
-        bytes32 indexed offerId,
-        CryptoToken crypto,
-        FiatCurrency fiat,
-        uint256 price
+
+    event LogGatewayMakerRegistered(
+        bytes32 indexed makerId,
+        address indexed makerAddr,
+        address crypto,
+        string fiat
     );
+
+    event LogGatewayBuyCryptoOrderCreated(
+        address indexed taker,
+        bytes32 indexed orderId,
+        address crypto,
+        string fiat,
+        uint256 amount,
+        uint256 fiatPaymentMethodIdx
+    );
+
     event LogPayoutFulfilled(bytes32 requestId, bool result);
-    
+
 
     /* ------------------------------------------------------
-     *  Reason messages
+     *  Solidity error reasons
      * ------------------------------------------------------ */
 
-    string constant REASON_DEALER_ALREADY_EXISTS = "Dealer already exists";
-    string constant REASON_OFFER_ALREADY_PLACED = "Offer already placed";
+    string constant REASON_MAKER_ALREADY_EXISTS = "Maker already exists";
+    string constant REASON_OFFER_ALREADY_PLACED = "Order already placed";
 
 
-    /**
-     * @notice Deploy the contract with a specified address for the LINK
-     * and Oracle contract addresses
-     * @dev Sets the storage for the specified addresses
-     * @param _link The address of the LINK token contract
-     */
+    /// @notice Create the contract with a specified address for the LINK
+    ///         contract.
+    /// @param _link The address of the LINK token contract
     constructor(address _link) public Ownable() {
         if (_link == address(0)) {
             setPublicChainlinkToken();
         } else {
             setChainlinkToken(_link);
         }
+
+    }
+
+    /// @notice Add a fiat payment method to the gateway.
+    /// @param _displayName A display name. eg. 'WeChat Pay'
+    /// @param _oracleAddr Address of oracle with bridge to gateway
+    /// @param _newMakerJobId New maker job
+    /// @param _buyCryptoOrderJobId buyCryptoOrder job
+    /// @param _buyCryptoOrderPayedJobId buyCryptoOrderPayed job
+    /// @return methodIdx Index of the FiatPaymentMethod
+    function addFiatPaymentMethod(
+        string calldata _displayName,
+        address _oracleAddr,
+        string calldata _newMakerJobId,
+        string calldata _buyCryptoOrderJobId,
+        string calldata _buyCryptoOrderPayedJobId
+    )
+        external
+        onlyOwner
+        returns (uint256 methodIdx)
+    {
+        fiatPaymentMethods.push(
+            FiatPaymentMethod(
+                _displayName,
+                _oracleAddr,
+                _newMakerJobId,
+                _buyCryptoOrderJobId,
+                _buyCryptoOrderPayedJobId
+            )
+        );
+        methodIdx = fiatPaymentMethods.length - 1;
+
+        emit LogGatewayFiatPaymentMethodAdded(_displayName, _oracleAddr, methodIdx);
     }
 
 
     /* ------------------------------------------------------
-     *    Dealer Functions
+     *    Maker Functions
      * ------------------------------------------------------ */
 
-    /// @notice Dealer registers in the market
-    /// @param _oracleAddr Address of the dealers pay out Oracle
-    /// @param _jobId JobID for payouts at the _oracleAddr
-    /// @return bytes32 dealerId Dealer ID for the new dealer
-    function dealerRegister(
-        address _oracleAddr,
-        string calldata _jobId
+    /// @notice Maker registers to provide liquidity for a pair and fiat payment method.
+    /// @param _fiatPaymentMethodIdx Index into fiatPaymentMethods
+    /// @param _crypto ERC20 address or ETH_ADDRESS of crypto token
+    /// @param _fiat ISO 4217 currency code
+    /// @param _destination Payment destination on the fiatPaymentMethod network
+    /// @param _ipfsHash Hash of file on ipfs holding encrypted API
+    ///                  credentials for this maker
+    /// @return makerId Maker ID hash for this market pair and method.
+    function makerRegister(
+        uint256 _fiatPaymentMethodIdx,
+        address _crypto,
+        string calldata _fiat,
+        string calldata _destination,
+        string calldata _ipfsHash
     )
         external
         // TODO: check not already exists
         // TODO: require a security deposit
-        returns (bytes32 dealerId)
+        returns (bytes32 makerId)
     {
-        address admin = msg.sender;
-        dealerId = keccak256(abi.encodePacked(admin, _oracleAddr, _jobId));
-        dealers[dealerId] = Dealer(admin, _oracleAddr, _jobId, true);
-        emit LogGatewayDealerRegistered(dealerId, admin, _oracleAddr, _jobId);
+        address makerAddr = msg.sender;
+        makerId = keccak256(
+            abi.encodePacked(
+                makerAddr,
+                _fiatPaymentMethodIdx,
+                _crypto,
+                _fiat
+            )
+        );
+
+        FiatPaymentMethod storage fpm = fiatPaymentMethods[_fiatPaymentMethodIdx];
+
+        // ChainLink: tell fiat payment oracle about the new maker
+        Chainlink.Request memory req = buildChainlinkRequest(
+            stringToBytes32(fpm.newMakerJobId),
+            address(this),
+            this.fulfillMakerRegister.selector
+        );
+
+        req.add("method", "newMaker");
+        req.addBytes("public_account", abi.encodePacked(makerAddr));
+        req.addBytes("maker_id", abi.encodePacked(makerId));
+        req.addBytes("crypto", abi.encodePacked(_crypto));
+        req.add("fiat", _fiat);
+        req.add("destination", _destination);
+        req.add("api_creds_ipfs_hash", _ipfsHash);
+
+        sendChainlinkRequestTo(fpm.oracleAddr, req, ORACLE_PAYMENT);
+
+        makers[makerId] = Maker(makerAddr, _fiatPaymentMethodIdx, _crypto, _fiat, true);
+        emit LogGatewayMakerRegistered(makerId, makerAddr, _crypto, _fiat);
     }
 
-    /// @notice Dealer places an offer for a pair
-    /// param _crypto CryptoToken to buy/sell
-    /// param _fiat FiatCurrency to buy sell
-    /// @param _price Price for market pair adjusted by 10 decimals (multiplied by 10^10)
-    /// @return bytes32 offerId for the new offer
-    function dealerBuyCryptoOfferCreate(
-        // TODO: offer per pair:
+    /// @notice Called by the Oracle when newMaker has been fulfilled.
+    /// @param _fiatPaymentMethodIdx Index into fiatPaymentMethods
+    /// @return makerId Maker ID hash for this market pair and method.
+    function fulfillMakerRegister(
+        uint256 _fiatPaymentMethodIdx
+    )
+       external
+       returns (bytes32 makerId)
+    {
+        // address makerAddr = msg.sender;
+    }
 
-        // CryptoToken _crypto,
-        // FiatCurrency _fiat,
-        uint256 _price
+    /// @notice Taker places an order for a pair
+    /// @param _crypto ERC20 address or ETH_ADDRESS of crypto token
+    /// @param _fiat ISO 4217 currency code
+    /// @param _amount Amount of crypto to buy (in wei if ETH or in decimals()
+    ///                for an ERC20 token)
+    /// @param _fiatPaymentMethodIdx Index into fiatPaymentMethods
+    /// @return bytes32 orderId for the new order
+    function buyCryptoOrderCreate(
+        address _crypto,
+        string calldata _fiat,
+        uint256 _amount,
+        uint256 _fiatPaymentMethodIdx
     )
         external
-        // TODO: msg.sender is a registered dealer
-        returns (bytes32 offerId)
+        returns (bytes32 orderId)
     {
-        // hard code for now:
-        CryptoToken _crypto = CryptoToken.ETH;
-        FiatCurrency _fiat = FiatCurrency.AUD;
+        address taker = msg.sender;
 
-        offerId = keccak256(
-            abi.encodePacked(msg.sender, _crypto, _fiat, _price)
+        orderId = keccak256(
+            abi.encodePacked(taker, _crypto, _fiat, _amount)
         );
 
-        // TODO: offer doesn't exist already
-        buyOffers[offerId] = Offer(_crypto, _fiat, _price);
+        // TODO: check order doesn't exist already
 
-        emit LogGatewayDealerBuyCryptoOfferCreated(
-            0x0,  // TODO: dealer id - lookup from msg.sender
-            offerId,
+        buyOrders[orderId] = Order(
+            taker,
             _crypto,
             _fiat,
-            _price
+            _amount,
+            _fiatPaymentMethodIdx
         );
 
-        return offerId;
+        emit LogGatewayBuyCryptoOrderCreated(
+            taker,  // TODO: maker id - lookup from msg.sender
+            orderId,
+            _crypto,
+            _fiat,
+            _amount,
+            _fiatPaymentMethodIdx
+        );
+
+        return orderId;
     }
 
-    // function dealerOfferUpdate() external returns (bytes32 dealerId);
-    // function dealerOfferRemove() external returns (bytes32 dealerId);
+    // function makerOrderUpdate() external returns (bytes32 makerId);
+    // function makerOrderRemove() external returns (bytes32 makerId);
 
 
     /* ------------------------------------------------------
      *    Order Functions
      * ------------------------------------------------------ */
 
-    /// Sell crypto for fiat. A trader takes a dealers offer for a given amount.
-    /// @notice Sells crypto for an offer
-    function sellCrypto(
-        bytes32 dealerId,
-        bytes32 offerId,
-        uint256 amount,
-        string calldata receiver
-        // TODO: use an encrypted receiver
-        // bytes32 receiver
-    )
-        external
-        // dealerIsActive(sellOrder.oracle)
-    {
-        // TODO: add checks
-        Dealer memory dealer = dealers[dealerId];
-        // Offer memory offer = offers[offerId];
+    /// Sell crypto for fiat. A trader takes a makers order for a given amount.
+    /// @notice Sells crypto for an order
+    // function sellCrypto(
+    //     bytes32 _makerId,
+    //     bytes32 _orderId,
+    //     uint256 _amount,
+    //     string calldata _receiver
+    //     // TODO: use an encrypted receiver
+    //     // bytes32 receiver
+    // )
+    //     external
+    //     // makerIsActive(sellOrder.oracle)
+    // {
+    //     // TODO: add checks
+    //     // Maker storage maker = makers[_makerId];
+    //     // Order storage order = orders[orderId];
 
-        // TODO: dollarAmount = amount / offer.price
-        uint256 dollarAmount = 2;
+    //     // TODO: dollarAmount = amount / order.price
+    //     // uint256 dollarAmount = 2;
 
-        payout(dealer.oracleAddr, dealer.jobId, dollarAmount, receiver);
-    }
+    //     // payout(maker.oracleAddr, maker.jobId, dollarAmount, receiver);
+    // }
 
     /* ------------------------------------------------------
      *    Payout Functions
@@ -207,11 +318,11 @@ contract Gateway is ChainlinkClient, Ownable {
 
     function payout(
         address _oracle,
-        string memory _jobId,
+        string calldata _jobId,
         uint amount,
-        string memory receiver
+        string calldata receiver
     )
-        public
+        external
         onlyOwner
     {
         Chainlink.Request memory req = buildChainlinkRequest(

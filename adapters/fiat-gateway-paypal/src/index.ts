@@ -38,8 +38,8 @@ export class SendPayoutRequest extends Request {
 export class NewMakerRequest extends Request {
   public_account: string
   maker_id: string
-  fiat_currency: string
-  token: string
+  fiat: string
+  crypto: string
   reserve_amount: string
   destination: string
   api_creds_ipfs_hash: string
@@ -58,8 +58,8 @@ export class BuyCryptoOrderRequest extends Request {
   buyer_address: string
   order_id: string
   order_amount: string
-  fiat_currency: string
-  token: string
+  fiat: string
+  crypto: string
 }
 
 export class BuyCryptoOrderPayedRequest extends Request {

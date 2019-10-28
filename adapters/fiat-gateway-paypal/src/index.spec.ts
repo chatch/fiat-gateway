@@ -4,7 +4,7 @@ import EthCrypto, { Encrypted } from 'eth-crypto'
 import IPFS from 'ipfs-http-client'
 import 'mocha'
 import path from 'path'
-import {isUserEthereumAddressInBloom, soliditySha3} from 'web3-utils'
+import {soliditySha3} from 'web3-utils'
 
 import {
   BuyCryptoOrderPayedRequest,
@@ -46,8 +46,8 @@ const newMakerRequest = (
     method: 'newMaker',
     public_account: makerPublicAddress,
     maker_id: soliditySha3(makerPublicAddress, 'AUD', 'ETH'),
-    fiat_currency: 'AUD',
-    token: 'ETH',
+    fiat: 'AUD',
+    crypto: 'ETH',
     reserve_amount: '250',
     destination: 'maker@liquidity.com',
     api_creds_ipfs_hash: credsIpfsHash,
@@ -230,8 +230,8 @@ describe('#buy', function() {
         buyer_address: buyer.address,
         order_id: '0x12345',
         order_amount: '50',
-        fiat_currency: 'AUD',
-        token: 'ETH',
+        fiat: 'AUD',
+        crypto: 'ETH',
       } as BuyCryptoOrderRequest,
     }
 
