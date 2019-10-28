@@ -4,9 +4,11 @@ import EthCrypto, { Encrypted } from 'eth-crypto'
 import IPFS from 'ipfs-http-client'
 import 'mocha'
 import path from 'path'
-import {soliditySha3} from 'web3-utils'
+import {isUserEthereumAddressInBloom, soliditySha3} from 'web3-utils'
 
 import {
+  BuyCryptoOrderPayedRequest,
+  BuyCryptoOrderRequest,
   JobRequest,
   NewMakerRequest,
   Request,
@@ -14,7 +16,13 @@ import {
   SendPayoutRequest,
 } from './index'
 
-dotenv.config({ path: path.resolve(process.cwd(), './paypal.test.env') })
+dotenv.config({ path: path.resolve(process.cwd(), './test.env') })
+
+const {
+  CLIENT_ID,
+  CLIENT_SECRET,
+  PUBLIC_KEY: ADAPTER_PUBLIC_KEY,
+} = process.env
 
 const jobID = '278c97ffadb54a5bbb93cfec5f7b5503'
 
@@ -30,7 +38,61 @@ const sendPayoutRequest = ({
   receiver: 'your-buyer@example.com',
 } as SendPayoutRequest)
 
-describe('#sendPayout', function() {
+const newMakerRequest = (
+  makerPublicAddress,
+  credsIpfsHash,
+): NewMakerRequest => {
+  return {
+    method: 'newMaker',
+    public_account: makerPublicAddress,
+    maker_id: soliditySha3(makerPublicAddress, 'AUD', 'ETH'),
+    fiat_currency: 'AUD',
+    token: 'ETH',
+    reserve_amount: '250',
+    destination: 'maker@liquidity.com',
+    api_creds_ipfs_hash: credsIpfsHash,
+  }
+}
+
+/***********************************************************
+ * Routine to setup api creds for a single maker on IPFS.
+ * Store the IPFS hash in apiCredsIpfsHash for test usage.
+ **********************************************************/
+
+let apiCredsIpfsHash
+
+// Maker account
+const makerIdentity = EthCrypto.createIdentity()
+
+// setup IPFS for storing encrypred creds
+const ipfs = IPFS('ipfs.infura.io', '5001', {protocol: 'https'})
+
+const apiCreds = {
+  id: CLIENT_ID,
+  sec: CLIENT_SECRET,
+}
+
+const setupApiCredsOnIpfs = async () => {
+  // encrypt the credentials with the adapters public key
+  const apiCredsEncrypted: Encrypted = await EthCrypto.encryptWithPublicKey(
+    ADAPTER_PUBLIC_KEY as string,
+    JSON.stringify(apiCreds),
+  )
+
+  // publish the encrypted creds to ipfs and save the hash
+  const apiCredsEncryptedBuf = Buffer.from(JSON.stringify(apiCredsEncrypted), 'utf8')
+  console.log(`adding encrypted creds file to ipfs`)
+
+  apiCredsIpfsHash = (await ipfs.add(apiCredsEncryptedBuf))[0].path
+  console.log(`got creds ipfs hash: ${apiCredsIpfsHash}`)
+}
+
+before(async function() {
+  this.timeout(15000)
+  await setupApiCredsOnIpfs()
+})
+
+describe.skip('#sendPayout', function() {
   // enough time for paypal calls
   this.timeout(10000)
 
@@ -74,7 +136,7 @@ describe('#sendPayout', function() {
   })
 })
 
-describe('#getPayout', function() {
+describe.skip('#getPayout', function() {
   // enough time for paypal calls
   this.timeout(10000)
 
@@ -127,61 +189,82 @@ describe('create request', () => {
   })
 })
 
-describe.only('#newMaker', function() {
-  // enough time for ipfs calls
-  this.timeout(20000)
-
-  // An identity for the maker - use the public account address
-  const makerIdentity = EthCrypto.createIdentity()
-
-  // In a deployed environment this public key is published.
-  // Here we generate one for testing.
-  const paypalAdapterPublicKey = EthCrypto.createIdentity().publicKey
-
-  // setup IPFS for storing encrypred creds
-  const ipfs = IPFS('ipfs.infura.io', '5001', {protocol: 'https'})
-  const apiCreds = {
-    id: process.env.CLIENT_ID,
-    sec: process.env.CLIENT_SECRET,
-  }
-
-  const newMakerRequest: Partial<NewMakerRequest> = {
-    method: 'newMaker',
-    public_account: makerIdentity.address,
-    maker_id: soliditySha3(makerIdentity.address, 'AUD', 'ETH'),
-    fiat_currency: 'AUD',
-    token: 'ETH',
-    reserve_amount: 250,
-    // api_creds_ipfs_hash - will be added below
-  }
-
-  let apiCredsIpfsHash
-
-  before(async () => {
-    // encrypt the credentials with the adapters public key
-    const apiCredsEncrypted: Encrypted = await EthCrypto.encryptWithPublicKey(
-      paypalAdapterPublicKey,
-      JSON.stringify(apiCreds),
-    )
-
-    // publish the encrypted creds to ipfs and save the hash
-    const apiCredsEncryptedBuf = Buffer.from(JSON.stringify(apiCredsEncrypted), 'utf8')
-    console.log(`adding encrypted creds file to ipfs @ ${Date.now()}`)
-
-    apiCredsIpfsHash = (await ipfs.add(apiCredsEncryptedBuf))[0].path
-    console.log(`got creds ipfs hash: ${apiCredsIpfsHash} @ ${Date.now()}`)
-
-    newMakerRequest.api_creds_ipfs_hash = apiCredsIpfsHash
-  })
+describe('#newMaker', function() {
+  // enough time for ipfs get
+  this.timeout(15000)
 
   it('should add new maker', async function() {
-    const req = {...baseReq, data: newMakerRequest}
+    const req = {
+      ...baseReq,
+      data: newMakerRequest(makerIdentity.address, apiCredsIpfsHash),
+    }
 
     const rsp = await requestWrapper(req)
 
     assert.equal(rsp.statusCode, 201, 'status code')
     assert.equal(rsp.jobRunID, jobID, 'job id')
     assert.isNotEmpty(rsp.data, 'rsp data')
-    assert.isNotEmpty(rsp.data.result, 'payout id')
+  })
+})
+
+describe('#buy', function() {
+  // enough time for ipfs get
+  this.timeout(15000)
+
+  it('handles full cycle for a buy crypto order', async function() {
+    // Create a new maker
+    const maker = EthCrypto.createIdentity()
+    const makerReq = {
+      ...baseReq,
+      data: newMakerRequest(maker.address, apiCredsIpfsHash),
+    }
+    const newMakerRsp = await requestWrapper(makerReq)
+    assert.equal(newMakerRsp.statusCode, 201, 'status code')
+
+    // Create a buy order from a buyer
+    const buyer = EthCrypto.createIdentity()
+    const buyCryptoOrderReq = {
+      ...baseReq,
+      data: {
+        method: 'buyCryptoOrder',
+        buyer_address: buyer.address,
+        order_id: '0x12345',
+        order_amount: '50',
+        fiat_currency: 'AUD',
+        token: 'ETH',
+      } as BuyCryptoOrderRequest,
+    }
+
+    const orderRsp = await requestWrapper(buyCryptoOrderReq)
+
+    assert.equal(orderRsp.statusCode, 201, 'status code')
+    assert.equal(
+      orderRsp.data.maker_id,
+      makerReq.data.maker_id,
+      'maker id',
+    )
+    assert.equal(
+      orderRsp.data.destination,
+      makerReq.data.destination,
+      'maker destination address',
+    )
+    assert.equal(orderRsp.data.price, '123.45', 'price for buy')
+
+    // Tell the adapter that the order has been payed
+    // The adapter will check the payment then fill the order
+    const buyCryptoOrderPayedReq = {
+      ...baseReq,
+      data: {
+        method: 'buyCryptoOrderPayed',
+        order_id: buyCryptoOrderReq.data.order_id,
+        maker_id: orderRsp.data.destination,
+        payout_id: 'buyer@wantcrypto.com',
+        price: orderRsp.data.price,
+      } as BuyCryptoOrderPayedRequest,
+    }
+
+    const payedRsp = await requestWrapper(buyCryptoOrderPayedReq)
+
+    assert.equal(orderRsp.statusCode, 200, 'status code')
   })
 })

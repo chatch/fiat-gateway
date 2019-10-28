@@ -40,22 +40,46 @@ export class NewMakerRequest extends Request {
   maker_id: string
   fiat_currency: string
   token: string
-  reserve_amount: number
+  reserve_amount: string
+  destination: string
   api_creds_ipfs_hash: string
+}
+
+export class PaypalApiCredentials {
+  id: string
+  sec: string
+}
+
+export class Maker extends NewMakerRequest {
+  api_creds: PaypalApiCredentials
 }
 
 export class BuyCryptoOrderRequest extends Request {
   buyer_address: string
-  orderId: string
-  orderAmount: number
-  fiatCurrency: string
+  order_id: string
+  order_amount: string
+  fiat_currency: string
   token: string
 }
 
+export class BuyCryptoOrderPayedRequest extends Request {
+  order_id: string
+  maker_id: string
+  price: string
+  buyer_address: string
+  payout_id: string // TODO: should be sent encrypted
+}
+
+const {CLIENT_ID, CLIENT_SECRET, STAGE} = process.env
+
+// Store makers in memory for now - map of makerId to Maker
+// TODO: persist it
+const makers = {}
+
 paypal.configure({
-  mode: process.env.STAGE === 'live' ? 'live' : 'sandbox',
-  client_id: process.env.CLIENT_ID,
-  client_secret: process.env.CLIENT_SECRET,
+  mode: STAGE === 'live' ? 'live' : 'sandbox',
+  client_id: CLIENT_ID,
+  client_secret: CLIENT_SECRET,
 })
 
 const sendPayout = async (data: SendPayoutRequest) => {
@@ -126,13 +150,23 @@ const getPayout = async (data: GetPayoutRequest) => {
 
 const newMaker = async (data: NewMakerRequest) => {
   return new Promise(async (resolve, reject) => {
-    console.log(`newMaker req: ${JSON.stringify(data, null, 2)}`)
-
     const ipfs = IPFS('ipfs.infura.io', '5001', {protocol: 'https'})
     const ipfsRsp = await ipfs.get(data.api_creds_ipfs_hash)
     const apiCredsBuf = ipfsRsp[0].content
-    const apiCreds = JSON.parse(apiCredsBuf.toString())
-    console.log(`got maker creds: ${JSON.stringify(apiCreds)} @ ${Date.now()}`)
+    const apiCredsEncrypted = JSON.parse(apiCredsBuf.toString())
+    console.log(`got encrypted creds: ${JSON.stringify(apiCredsEncrypted)}`)
+
+    // const encryptedStr = EthCrypto.cipher.stringify(apiCredsEncrypted)
+    const privateKey = process.env.PRIVATE_KEY as string
+    const apiCredsStr = await EthCrypto.decryptWithPrivateKey(
+      privateKey,
+      apiCredsEncrypted,
+    )
+    const apiCreds = JSON.parse(apiCredsStr)
+
+    const maker: Maker = {...data, api_creds: apiCreds}
+    console.log(`Adding maker: ${JSON.stringify(maker, null, 2)}`)
+    makers[maker.maker_id] = maker
 
     return resolve({ statusCode: 201, data: {makerId: data.maker_id} })
   })
@@ -140,7 +174,46 @@ const newMaker = async (data: NewMakerRequest) => {
 
 const buyCryptoOrder = async (data: BuyCryptoOrderRequest) => {
   return new Promise((resolve, reject) => {
-    throw new Error('not yet implemented')
+    // pick the first Maker off the list
+    // TODO: implement a queue and choose in rotation
+    const makerId = Object.keys(makers)[0]
+    const maker: Maker = makers[makerId]
+
+    // TODO: check liquidity of selected maker to cover the order
+
+    // TODO: grab the price from an aggregated feed
+    // (poss this should be requested from the contract ...?)
+    const price = '123.45'
+
+    return resolve({
+      statusCode: 201,
+      data: {
+        maker_id: maker.maker_id,
+        destination: maker.destination,
+        price,
+      },
+    })
+  })
+}
+
+const buyCryptoOrderPayed = async (data: BuyCryptoOrderPayedRequest) => {
+  return new Promise(async (resolve, reject) => {
+    // the maker pre selected to fill the order
+    const maker: Maker = makers[data.maker_id]
+
+    // TODO: verify the payout_id and payment amount
+    // data.payout_id
+
+    // TODO: set only if payment verified
+    const result = true
+
+    return resolve({
+      statusCode: 200,
+      data: {
+        result,
+        order_id: data.order_id,
+      },
+    })
   })
 }
 

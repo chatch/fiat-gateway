@@ -6,7 +6,7 @@ custom:
 provider:
   name: aws
   profile: chatch-serverless
-  region: ap-southeast-2
+  region: ap-south-1
   runtime: nodejs10.x
   stage: dev
   memorySize: 128
@@ -22,4 +22,6 @@ functions:
     environment:
       CLIENT_ID: ${ssm:/${self:custom.stage}/paypal-client-id}
       CLIENT_SECRET: ${ssm:/${self:custom.stage}/paypal-client-secret}
+      PUBLIC_KEY: ${ssm:/${self:custom.stage}/paypal-adapter-public-key}
+      PRIVATE_KEY: ${ssm:/${self:custom.stage}/paypal-adapter-private-key}
       STAGE: ${self:custom.stage}
