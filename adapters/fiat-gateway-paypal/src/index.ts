@@ -70,6 +70,15 @@ export class BuyCryptoOrderPayedRequest extends Request {
   payout_id: string // TODO: should be sent encrypted
 }
 
+export class SellCryptoOrderRequest extends Request {
+  seller_address: string
+  order_id: string
+  order_amount: string
+  fiat: string
+  crypto: string
+  destination_ipfs_hash: string
+}
+
 const {CLIENT_ID, CLIENT_SECRET, STAGE} = process.env
 
 // Store makers in memory for now - map of makerId to Maker
@@ -212,6 +221,34 @@ const buyCryptoOrderPayed = async (data: BuyCryptoOrderPayedRequest) => {
       data: {
         result,
         order_id: data.order_id,
+      },
+    })
+  })
+}
+
+const sellCryptoOrder = async (data: SellCryptoOrderRequest) => {
+  return new Promise((resolve, reject) => {
+    // pick the first Maker off the list
+    // TODO: implement a queue and choose in rotation
+    const makerId = Object.keys(makers)[0]
+    const maker: Maker = makers[makerId]
+
+    // TODO: check liquidity of selected maker to cover the order
+
+    // TODO: grab the price from an aggregated feed
+    // (poss this should be requested from the contract ...?)
+    const price = '123.45'
+
+      // TODO: payout:
+    const payoutId = 'xyz'
+
+    return resolve({
+      statusCode: 201,
+      data: {
+        order_id: data.order_id,
+        price,
+        payout_id: payoutId,
+        buyer_address: maker.public_account,
       },
     })
   })

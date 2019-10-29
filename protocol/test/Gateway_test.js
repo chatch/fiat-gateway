@@ -40,10 +40,12 @@ contract('Gateway', accounts => {
   const jobIdStr1 = '4c7b7ffb66b344fbaa64995af81e355a'
   const jobIdStr2 = 'c9ff45d9c0724505a79d6c8df8611b79'
   const jobIdStr3 = '3dabbd2a14604aef8719fa8762542137'
+  const jobIdStr4 = 'aef8719fa87625421374d234abbd2604'
 
   const jobIdHex1 = web3.utils.toHex(jobIdStr1)
   const jobIdHex2 = web3.utils.toHex(jobIdStr2)
   const jobIdHex3 = web3.utils.toHex(jobIdStr3)
+  const jobIdHex4 = web3.utils.toHex(jobIdStr4)
 
   const paymentMethodName = 'WeChat'
 
@@ -74,6 +76,7 @@ contract('Gateway', accounts => {
       jobIdHex1,
       jobIdHex2,
       jobIdHex3,
+      jobIdHex4,
       {
         from: defaultAccount,
       }
@@ -147,12 +150,12 @@ contract('Gateway', accounts => {
   describe('#addFiatPaymentMethod', () => {
     it('adds new payment method', async () => {
       const {methodRec} = await addFiatPaymentMethod()
-
       assert.equal(methodRec.displayName, paymentMethodName, 'method name')
       assert.equal(methodRec.oracleAddr, oracleAddr, 'method oracleAddr')
       assert.equal(methodRec.newMakerJobId, jobIdHex1, 'method newMakerJobId')
       assert.equal(methodRec.buyCryptoOrderJobId, jobIdHex2, 'method buyCryptoOrderJobId')
       assert.equal(methodRec.buyCryptoOrderPayedJobId, jobIdHex3, 'method buyCryptoOrderPayedJobId')
+      assert.equal(methodRec.sellCryptoOrderJobId, jobIdHex4, 'method sellCryptoOrderJobId')
     })
   })
 
@@ -175,7 +178,7 @@ contract('Gateway', accounts => {
     })
   })
 
-  describe('#makerBuyCryptoOrderCreate', () => {
+  describe('#buyCryptoOrderCreate', () => {
     beforeEach(async () => Promise.all([
       oneLinkToGateway(makerAddr), // for makerRegister
       oneLinkToGateway(buyerAddr) // for buyCryptoOrderCreate
@@ -205,7 +208,7 @@ contract('Gateway', accounts => {
       assert.equal(order.crypto, nativeEthAddress, 'crypto should be ETH')
       assert.equal(order.fiat, 'AUD', 'fiat should be AUD')
       assert.equal(order.amount.toString(), cryptoAmount.toString(), 'amount should be cryptoAmount')
-      assert.equal(order.fiatPaymentMethodIdx.toString(), methodIdx, 'amount should be cryptoAmount')
+      assert.equal(order.fiatPaymentMethodIdx.toString(), methodIdx, 'FiatPaymentMethod correct')
 
       request = h.decodeRunRequest(tx.receipt.rawLogs[2])
       assert.equal(oracleAddr, tx.receipt.rawLogs[2].address)
@@ -213,37 +216,47 @@ contract('Gateway', accounts => {
     })
   })
 
-  // describe('#placeOrder', () => {
-  //   context('with LINK', () => {
-  //     let request
+  describe.only('#sellCryptoOrder', () => {
+    beforeEach(async () => Promise.all([
+      oneLinkToGateway(makerAddr), // for makerRegister
+      oneLinkToGateway(sellerAddr) // for sellCryptoOrder
+    ]))
 
-  //     beforeEach(async () => {
-  //       await link.transfer(gateAddr, oneLINK)
-  //     })
 
-  //     context('sending a request to a specific oracle contract address', () => {
-  //       it('triggers a log event in the new Oracle contract', async () => {
-  //         const tx = await gate.createRequestTo(
-  //           oracleAddr,
-  //           jobIdHex,
-  //           payment,
-  //           url,
-  //           path,
-  //           times,
-  //           { from: seller },
-  //         )
-  //         request = h.decodeRunRequest(tx.receipt.rawLogs[3])
-  //         assert.equal(oracleAddr, tx.receipt.rawLogs[3].address)
-  //         assert.equal(
-  //           request.topic,
-  //           web3.utils.keccak256(
-  //             'OracleRequest(bytes32,address,bytes32,uint256,address,bytes4,uint256,uint256,bytes)',
-  //           ),
-  //         )
-  //       })
-  //     })
-  //   })
-  // })
+    it('creates order', async () => {
+      // setup method and maker for currency pair
+      const {methodIdx} = await addFiatPaymentMethod()
+      await makerRegister(methodIdx)
+
+      // create an order
+      const cryptoAmount = oneETH
+      const destinationIpfsHash = 'QmeYYwD4y4DgVVdAzhT7wW5vrvmbKPQj8wcV2pAzjbj886'
+
+      const tx = await gate.sellCryptoOrder(
+        nativeEthAddress,
+        "AUD",
+        methodIdx,
+        destinationIpfsHash,
+        {
+          from: sellerAddr,
+          value: cryptoAmount
+        }
+      )
+
+      const orderId = tx.logs[1].args.orderId
+      const order = await gate.sellOrders.call(orderId)
+
+      assert.equal(order.taker, sellerAddr, 'taker should by seller')
+      assert.equal(order.crypto, nativeEthAddress, 'crypto should be ETH')
+      assert.equal(order.fiat, 'AUD', 'fiat should be AUD')
+      assert.equal(order.amount.toString(), cryptoAmount.toString(), 'amount should be cryptoAmount')
+      assert.equal(order.fiatPaymentMethodIdx.toString(), methodIdx, 'FiatPaymentMethod correct')
+
+      request = h.decodeRunRequest(tx.receipt.rawLogs[2])
+      assert.equal(oracleAddr, tx.receipt.rawLogs[2].address)
+      assert.equal(request.topic, EVENT_ORACLE_REQUEST)
+    })
+  })
 
   // describe('#fulfill', () => {
   //   const expected = 50000

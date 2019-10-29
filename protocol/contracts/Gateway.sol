@@ -49,6 +49,7 @@ contract Gateway is ChainlinkClient, Ownable {
         string newMakerJobId;
         string buyCryptoOrderJobId;
         string buyCryptoOrderPayedJobId;
+        string sellCryptoOrderJobId;
     }
 
     /* All registered FiatPaymentMethods */
@@ -112,6 +113,15 @@ contract Gateway is ChainlinkClient, Ownable {
         uint256 fiatPaymentMethodIdx
     );
 
+    event LogGatewaySellCryptoOrder(
+        address indexed seller,
+        bytes32 indexed orderId,
+        address crypto,
+        string fiat,
+        uint256 amount,
+        uint256 fiatPaymentMethodIdx
+    );
+
     event LogPayoutFulfilled(bytes32 requestId, bool result);
 
 
@@ -140,13 +150,15 @@ contract Gateway is ChainlinkClient, Ownable {
     /// @param _newMakerJobId New maker job
     /// @param _buyCryptoOrderJobId buyCryptoOrder job
     /// @param _buyCryptoOrderPayedJobId buyCryptoOrderPayed job
+    /// @param _sellCryptoOrderJobId sellCryptoOrder job
     /// @return methodIdx Index of the FiatPaymentMethod
     function addFiatPaymentMethod(
         string calldata _displayName,
         address _oracleAddr,
         string calldata _newMakerJobId,
         string calldata _buyCryptoOrderJobId,
-        string calldata _buyCryptoOrderPayedJobId
+        string calldata _buyCryptoOrderPayedJobId,
+        string calldata _sellCryptoOrderJobId
     )
         external
         onlyOwner
@@ -158,7 +170,8 @@ contract Gateway is ChainlinkClient, Ownable {
                 _oracleAddr,
                 _newMakerJobId,
                 _buyCryptoOrderJobId,
-                _buyCryptoOrderPayedJobId
+                _buyCryptoOrderPayedJobId,
+                _sellCryptoOrderJobId
             )
         );
         methodIdx = fiatPaymentMethods.length - 1;
@@ -237,6 +250,11 @@ contract Gateway is ChainlinkClient, Ownable {
         revert("not yet implemented");
     }
 
+
+    /* ------------------------------------------------------
+     *    Order Functions
+     * ------------------------------------------------------ */
+
     /// @notice Taker places an order for a pair
     /// @param _crypto ERC20 address or ETH_ADDRESS of crypto token
     /// @param _fiat ISO 4217 currency code
@@ -312,32 +330,97 @@ contract Gateway is ChainlinkClient, Ownable {
     }
 
 
-    /* ------------------------------------------------------
-     *    Order Functions
-     * ------------------------------------------------------ */
+    /// @notice Taker places an order to sell crypto for fiat
+    /// @param _crypto ERC20 address or ETH_ADDRESS of crypto token
+    /// @param _fiat ISO 4217 currency code
+    /// @param _fiatPaymentMethodIdx Index into fiatPaymentMethods
+    /// @param _destinationIpfsHash Hash of file on ipfs with encrypted destination
+    ///         Encrypted with the external adapters ethcrypto key
+    /// @return bytes32 orderId for the new order
+    function sellCryptoOrder(
+        address _crypto,
+        string calldata _fiat,
+        uint256 _fiatPaymentMethodIdx,
+        string calldata _destinationIpfsHash
+    )
+        external
+        payable
+        returns (bytes32 orderId)
+    {
+        address seller = msg.sender;
 
-    /// Sell crypto for fiat. A trader takes a makers order for a given amount.
-    /// @notice Sells crypto for an order
-    // function sellCrypto(
-    //     bytes32 _makerId,
-    //     bytes32 _orderId,
-    //     uint256 _amount,
-    //     string calldata _receiver
-    //     // TODO: use an encrypted receiver
-    //     // bytes32 receiver
-    // )
-    //     external
-    //     // makerIsActive(sellOrder.oracle)
-    // {
-    //     // TODO: add checks
-    //     // Maker storage maker = makers[_makerId];
-    //     // Order storage order = orders[orderId];
+        uint amount = msg.value;
+        orderId = keccak256(
+            abi.encodePacked(seller, _crypto, _fiat, amount)
+        );
 
-    //     // TODO: dollarAmount = amount / order.price
-    //     // uint256 dollarAmount = 2;
+        // TODO: check order doesn't exist already
 
-    //     // payout(maker.oracleAddr, maker.jobId, dollarAmount, receiver);
-    // }
+        FiatPaymentMethod storage fpm = fiatPaymentMethods[_fiatPaymentMethodIdx];
+
+        // ChainLink: tell fiat payment oracle about the order
+        Chainlink.Request memory req = buildChainlinkRequest(
+            stringToBytes32(fpm.sellCryptoOrderJobId),
+            address(this),
+            this.fulfillSellCryptoOrder.selector
+        );
+
+        req.add("method", "sellCryptoOrder");
+        req.addBytes("seller_address", abi.encodePacked(seller));
+        req.addBytes("order_id", abi.encodePacked(orderId));
+        req.addUint("order_amount", amount);
+        req.addBytes("crypto", abi.encodePacked(_crypto));
+        req.add("fiat", _fiat);
+        req.add("destination_ipfs_hash", _destinationIpfsHash);
+
+        sendChainlinkRequestTo(fpm.oracleAddr, req, ORACLE_PAYMENT);
+
+        sellOrders[orderId] = Order(
+            seller,
+            _crypto,
+            _fiat,
+            amount,
+            _fiatPaymentMethodIdx
+        );
+
+        emit LogGatewaySellCryptoOrder(
+            seller,
+            orderId,
+            _crypto,
+            _fiat,
+            amount,
+            _fiatPaymentMethodIdx
+        );
+
+        return orderId;
+    }
+
+// fulfillSellCryptoOrder(orderId, priceUsed, makerAddress, encrypted(payoutId))
+//        sends crypto from escrow to makers address
+//        update the order with priceUsed and the payoutId
+
+    /// @notice Called by the Oracle when sellCryptoOrder has been fulfilled.
+    /// @param _orderId Order Id of the sale
+    /// @param _priceUsed Price used for the order
+    /// @param _payoutId Fiat payment network payout id
+    /// @param _buyerAddr Buyers address - send the crypto here
+    function fulfillSellCryptoOrder(
+        bytes32 _orderId,
+        uint256 _priceUsed,
+        // TODO: encrypt with the seller account
+        string calldata _payoutId,
+        address _buyerAddr
+    )
+       external
+    {
+        // TODO: send crypto from escrow to buyer address
+        //       add priceUsed and payoutId to the order details
+
+        revert("not yet implemented");
+    }
+
+
+
 
     /* ------------------------------------------------------
      *    Payout Functions
