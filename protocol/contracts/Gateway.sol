@@ -19,7 +19,7 @@ contract Gateway is ChainlinkClient, Ownable {
      * ------------------------------------------------------ */
 
     struct Maker {
-        address ethAddr; // account registering and maintaining the record
+        address makerAddr; // account registering and maintaining the record
         uint256 fiatPaymentMethodIdx;
         address crypto;    // ERC20 address or ETH_ADDRESS
         string fiat;       // ISO 4217 currency code
@@ -27,7 +27,7 @@ contract Gateway is ChainlinkClient, Ownable {
     }
 
     /*
-     * Maker ID [keccak256(ethAddr, fiatPaymentMethodIdx, crypto, fiat to)]
+     * Maker ID [keccak256(makerAddr, fiatPaymentMethodIdx, crypto, fiat to)]
      *   => Maker record
      */
 
@@ -91,9 +91,9 @@ contract Gateway is ChainlinkClient, Ownable {
      * ------------------------------------------------------ */
 
     event LogGatewayFiatPaymentMethodAdded(
+        uint256 indexed methodIdx,
         string indexed name,
-        address indexed oracle,
-        uint256 indexed methodIdx
+        address indexed oracle
     );
 
     event LogGatewayMakerRegistered(
@@ -132,7 +132,6 @@ contract Gateway is ChainlinkClient, Ownable {
         } else {
             setChainlinkToken(_link);
         }
-
     }
 
     /// @notice Add a fiat payment method to the gateway.
@@ -164,7 +163,7 @@ contract Gateway is ChainlinkClient, Ownable {
         );
         methodIdx = fiatPaymentMethods.length - 1;
 
-        emit LogGatewayFiatPaymentMethodAdded(_displayName, _oracleAddr, methodIdx);
+        emit LogGatewayFiatPaymentMethodAdded(methodIdx, _displayName, _oracleAddr);
     }
 
 
@@ -188,6 +187,7 @@ contract Gateway is ChainlinkClient, Ownable {
         string calldata _ipfsHash
     )
         external
+        // payable
         // TODO: check not already exists
         // TODO: require a security deposit
         returns (bytes32 makerId)
@@ -234,7 +234,7 @@ contract Gateway is ChainlinkClient, Ownable {
        external
        returns (bytes32 makerId)
     {
-        // address makerAddr = msg.sender;
+        revert("not yet implemented");
     }
 
     /// @notice Taker places an order for a pair
@@ -261,6 +261,24 @@ contract Gateway is ChainlinkClient, Ownable {
 
         // TODO: check order doesn't exist already
 
+        FiatPaymentMethod storage fpm = fiatPaymentMethods[_fiatPaymentMethodIdx];
+
+        // ChainLink: tell fiat payment oracle about the order
+        Chainlink.Request memory req = buildChainlinkRequest(
+            stringToBytes32(fpm.buyCryptoOrderJobId),
+            address(this),
+            this.fulfillBuyCryptoOrder.selector
+        );
+
+        req.add("method", "buyCryptoOrder");
+        req.addBytes("buyer_address", abi.encodePacked(taker));
+        req.addBytes("order_id", abi.encodePacked(orderId));
+        req.addUint("order_amount", _amount);
+        req.addBytes("crypto", abi.encodePacked(_crypto));
+        req.add("fiat", _fiat);
+
+        sendChainlinkRequestTo(fpm.oracleAddr, req, ORACLE_PAYMENT);
+
         buyOrders[orderId] = Order(
             taker,
             _crypto,
@@ -270,7 +288,7 @@ contract Gateway is ChainlinkClient, Ownable {
         );
 
         emit LogGatewayBuyCryptoOrderCreated(
-            taker,  // TODO: maker id - lookup from msg.sender
+            taker,
             orderId,
             _crypto,
             _fiat,
@@ -281,8 +299,17 @@ contract Gateway is ChainlinkClient, Ownable {
         return orderId;
     }
 
-    // function makerOrderUpdate() external returns (bytes32 makerId);
-    // function makerOrderRemove() external returns (bytes32 makerId);
+    /// @notice Called by the Oracle when buyCryptoOrder has been fulfilled.
+    /// @param _fiatPaymentMethodIdx Index into fiatPaymentMethods
+    /// @return makerId Maker ID hash for this market pair and method.
+    function fulfillBuyCryptoOrder(
+        uint256 _fiatPaymentMethodIdx
+    )
+       external
+       returns (bytes32 orderId)
+    {
+        revert("not yet implemented");
+    }
 
 
     /* ------------------------------------------------------
@@ -326,9 +353,9 @@ contract Gateway is ChainlinkClient, Ownable {
         onlyOwner
     {
         Chainlink.Request memory req = buildChainlinkRequest(
-                stringToBytes32(_jobId),
-                address(this),
-                this.fulfillPayout.selector
+            stringToBytes32(_jobId),
+            address(this),
+            this.fulfillPayout.selector
         );
         req.add("method", "sendPayout");
         req.addUint("amount", amount);

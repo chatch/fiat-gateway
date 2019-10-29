@@ -1,0 +1,5 @@
+#!/bin/sh
+truffle-flattener \
+  contracts/Gateway.sol \
+  contracts/chainlink/LinkToken.sol \
+  contracts/chainlink/Oracle.sol | sed -e 's/_Chainlink//g'

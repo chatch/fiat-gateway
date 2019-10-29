@@ -67,8 +67,29 @@ contract ERC677Token is ERC677 {
     public
     returns (bool success)
   {
-    linkERC20Basic(this).transfer(_to, _value);
-    emit Transfer(msg.sender, _to, _value, _data);
+    // Can't use this as it makes a fresh call meaning tokens are
+    // going from LinkToken and not the caller... :
+    // linkERC20Basic(this).transfer(_to, _value);
+
+    // Can't use this as we hit the compile error
+    // https://github.com/ethereum/solidity/issues/7558 :
+    // linkERC20Basic(super).transfer(_to, _value);
+    
+    // don't use this function for this development only version of the
+    // contract until the compiler error is fixed. Split into 2.
+
+    // emit Transfer(msg.sender, _to, _value, _data);
+
+    if (isContract(_to)) {
+      contractFallback(_to, _value, _data);
+    }
+    return true;
+  }
+
+  function workaroundCallOnly(address _to, uint _value, bytes memory _data)
+    public
+    returns (bool success)
+  {
     if (isContract(_to)) {
       contractFallback(_to, _value, _data);
     }
@@ -281,7 +302,15 @@ contract LinkToken is linkStandardToken, ERC677Token {
     validRecipient(_to)
     returns (bool success)
   {
-    return super.transferAndCall(_to, _value, _data);
+    // HACK: See comments in transferAndCall.
+    //       for development we workaround in 2 steps.
+      // return super.transferAndCall(_to, _value, _data);
+
+      // step 1 transfer
+      super.transfer(_to, _value);
+
+      // step 2 call
+      return super.workaroundCallOnly(_to, _value, _data);
   }
 
   /**
