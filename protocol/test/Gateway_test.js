@@ -6,7 +6,7 @@ const {expectRevert} = require('openzeppelin-test-helpers')
 
 const BN = web3.utils.BN
 
-const PAYPAL_RECEIVER = 'sb-mtemn430137@personal.example.com'
+const PAYPAL_RECEIVER = 'sb-iltze485367@personal.example.com'
 const PRICE_ADJUSTER = new BN('10').pow(new BN('10'))
 const EVENT_ORACLE_REQUEST = web3.utils.keccak256(
   'OracleRequest(bytes32,address,bytes32,uint256,address,bytes4,uint256,uint256,bytes)',
