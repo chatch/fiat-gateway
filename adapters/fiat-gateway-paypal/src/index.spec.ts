@@ -13,6 +13,7 @@ import {
   NewMakerRequest,
   Request,
   requestWrapper,
+  SellCryptoOrderRequest,
   SendPayoutRequest,
 } from './index'
 
@@ -25,6 +26,7 @@ const {
 } = process.env
 
 const jobID = '278c97ffadb54a5bbb93cfec5f7b5503'
+const payoutDestination = 'ataker@example.com'
 
 const baseReq = {
   id: jobID,
@@ -34,8 +36,8 @@ const baseReq = {
 const sendPayoutRequest = ({
   method: 'sendPayout',
   amount: '10',
-  currency: 'USD',
-  receiver: 'your-buyer@example.com',
+  currency: 'AUD',
+  receiver: payoutDestination,
 } as SendPayoutRequest)
 
 const newMakerRequest = (
@@ -60,6 +62,7 @@ const newMakerRequest = (
  **********************************************************/
 
 let apiCredsIpfsHash
+let destinationIpfsHash
 
 // Maker account
 const makerIdentity = EthCrypto.createIdentity()
@@ -72,27 +75,39 @@ const apiCreds = {
   sec: CLIENT_SECRET,
 }
 
-const setupApiCredsOnIpfs = async () => {
-  // encrypt the credentials with the adapters public key
-  const apiCredsEncrypted: Encrypted = await EthCrypto.encryptWithPublicKey(
+const encryptAndStoreOnIpfs = async (dataStr) => {
+  // encrypt the data with the adapters public key
+  const encrypted: Encrypted = await EthCrypto.encryptWithPublicKey(
     ADAPTER_PUBLIC_KEY as string,
-    JSON.stringify(apiCreds),
+    dataStr,
   )
 
   // publish the encrypted creds to ipfs and save the hash
-  const apiCredsEncryptedBuf = Buffer.from(JSON.stringify(apiCredsEncrypted), 'utf8')
-  console.log(`adding encrypted creds file to ipfs`)
+  const encryptedBuf = Buffer.from(JSON.stringify(encrypted), 'utf8')
+  console.log(`adding encrypted file to ipfs`)
 
-  apiCredsIpfsHash = (await ipfs.add(apiCredsEncryptedBuf))[0].path
+  return (await ipfs.add(encryptedBuf))[0].path
+}
+
+const setupApiCredsOnIpfs = async () => {
+  apiCredsIpfsHash = await encryptAndStoreOnIpfs(JSON.stringify(apiCreds))
   console.log(`got creds ipfs hash: ${apiCredsIpfsHash}`)
+}
+
+const setupDestinationOnIpfs = async () => {
+  destinationIpfsHash = await encryptAndStoreOnIpfs(payoutDestination)
+  console.log(`got destination ipfs hash: ${destinationIpfsHash}`)
 }
 
 before(async function() {
   this.timeout(15000)
-  await setupApiCredsOnIpfs()
+  await Promise.all([
+    setupApiCredsOnIpfs(),
+    setupDestinationOnIpfs(),
+  ])
 })
 
-describe.skip('#sendPayout', function() {
+describe('#sendPayout', function() {
   // enough time for paypal calls
   this.timeout(10000)
 
@@ -105,7 +120,7 @@ describe.skip('#sendPayout', function() {
     assert.equal(rsp.jobRunID, jobID, 'job id')
     assert.isNotEmpty(rsp.data, 'rsp data')
     assert.isNotEmpty(rsp.data.result, 'payout id')
-  }).timeout(5000)
+  }).timeout(10000)
 
   it('should fail sendPayout with missing amount', async () => {
     const data = {
@@ -136,7 +151,7 @@ describe.skip('#sendPayout', function() {
   })
 })
 
-describe.skip('#getPayout', function() {
+describe('#getPayout', function() {
   // enough time for paypal calls
   this.timeout(10000)
 
@@ -203,11 +218,11 @@ describe('#newMaker', function() {
 
     assert.equal(rsp.statusCode, 201, 'status code')
     assert.equal(rsp.jobRunID, jobID, 'job id')
-    assert.isNotEmpty(rsp.data, 'rsp data')
+    assert.equal(rsp.data.maker_id, req.data.maker_id, 'maker id')
   })
 })
 
-describe('#buy', function() {
+describe.skip('#buy', function() {
   // enough time for ipfs get
   this.timeout(15000)
 
@@ -266,5 +281,45 @@ describe('#buy', function() {
     const payedRsp = await requestWrapper(buyCryptoOrderPayedReq)
 
     assert.equal(orderRsp.statusCode, 200, 'status code')
+    assert.equal(orderRsp.data.maker_id, 200, '')
+  })
+})
+
+describe.only('#sellCryptoOrder', function() {
+  // enough time for ipfs get plus paypal calls
+  this.timeout(25000)
+
+  it('handles full cycle for a sell crypto order', async function() {
+    // Create a new maker
+    const maker = EthCrypto.createIdentity()
+    const makerReq = {
+      ...baseReq,
+      data: newMakerRequest(maker.address, apiCredsIpfsHash),
+    }
+    const newMakerRsp = await requestWrapper(makerReq)
+    assert.equal(newMakerRsp.statusCode, 201, 'status code')
+
+    // Create a sell order from a seller
+    const seller = EthCrypto.createIdentity()
+    const sellCryptoOrderReq = {
+      ...baseReq,
+      data: {
+        method: 'sellCryptoOrder',
+        seller_address: seller.address,
+        order_amount: '50',
+        crypto: 'ETH',
+        fiat: 'AUD',
+        destination_ipfs_hash: destinationIpfsHash,
+      } as SellCryptoOrderRequest,
+    }
+
+    const orderRsp = await requestWrapper(sellCryptoOrderReq)
+
+    assert.equal(orderRsp.statusCode, 201, 'status code')
+    assert.equal(
+      orderRsp.data.maker_id,
+      makerReq.data.maker_id,
+      'maker id',
+    )
   })
 })

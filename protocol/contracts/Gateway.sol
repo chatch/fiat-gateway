@@ -19,15 +19,17 @@ contract Gateway is ChainlinkClient, Ownable {
      * ------------------------------------------------------ */
 
     struct Maker {
-        address makerAddr; // account registering and maintaining the record
+        address payable makerAddr; // account registering and maintaining the record
         uint256 fiatPaymentMethodIdx;
         address crypto;    // ERC20 address or ETH_ADDRESS
         string fiat;       // ISO 4217 currency code
-        bool active;
+        bool activated;
     }
 
     /*
-     * Maker ID [keccak256(makerAddr, fiatPaymentMethodIdx, crypto, fiat to)]
+     * All makers stored here.
+     *
+     * Mapping from Maker ID [keccak256(makerAddr, fiatPaymentMethodIdx, crypto, fiat to)]
      *   => Maker record
      */
 
@@ -67,24 +69,34 @@ contract Gateway is ChainlinkClient, Ownable {
         address crypto; // ERC20 address or ETH_ADDRESS
         string fiat;    // ISO 4217 currency code
 
+        // FiatPaymentMethod
+        uint256 fiatPaymentMethodIdx;
+
         // price in Fiat per 1 uint of crypto adjusted by 10 decimals
         // (eg. USD for ETH price $222.99 would be: 2229900000000)
         uint256 amount;
 
-        // FiatPaymentMethod
-        uint256 fiatPaymentMethodIdx;
+        // Price used for trade adjusted by 10 decimals (as per amount)
+        uint256 priceUsed;
+
+        // Payout id / reference
+        string payoutId;
+
+        // True if payed, false if failure or not yet payed
+        bool payed;
     }
 
     /*
-     * Order ID [keccack256(taker, _crypto, _fiat, _amount)]
-     *   => Order
+     * All orders stored in buyOrders and sellOrders.
+     *
+     * Mapping from Order (use the Oracle Request ID)  =>  Order record
      */
 
     mapping(bytes32 => Order) public buyOrders;
     mapping(bytes32 => Order) public sellOrders;
 
-    // TODO: move this into orders struct - result per Order
-    bool public payoutResult;
+    // keep track of escrow funds
+    mapping(address => uint256) public escrows;
 
 
     /* ------------------------------------------------------
@@ -97,11 +109,16 @@ contract Gateway is ChainlinkClient, Ownable {
         address indexed oracle
     );
 
-    event LogGatewayMakerRegistered(
+    event LogGatewayMakerRegister(
         bytes32 indexed makerId,
         address indexed makerAddr,
         address crypto,
         string fiat
+    );
+
+    event LogGatewayMakerRegisterFulfilled(
+        bytes32 indexed makerId,
+        bool activated
     );
 
     event LogGatewayBuyCryptoOrderCreated(
@@ -109,21 +126,23 @@ contract Gateway is ChainlinkClient, Ownable {
         bytes32 indexed orderId,
         address crypto,
         string fiat,
-        uint256 amount,
-        uint256 fiatPaymentMethodIdx
+        uint256 fiatPaymentMethodIdx,
+        uint256 amount
     );
 
     event LogGatewaySellCryptoOrder(
-        address indexed seller,
         bytes32 indexed orderId,
+        address indexed seller,
         address crypto,
         string fiat,
-        uint256 amount,
-        uint256 fiatPaymentMethodIdx
+        uint256 fiatPaymentMethodIdx,
+        uint256 amount
     );
 
-    event LogPayoutFulfilled(bytes32 requestId, bool result);
-
+    event LogGatewaySellCryptoCompleted(
+        bytes32 indexed orderId,
+        bool result
+    );
 
     /* ------------------------------------------------------
      *  Solidity error reasons
@@ -200,12 +219,12 @@ contract Gateway is ChainlinkClient, Ownable {
         string calldata _ipfsHash
     )
         external
-        // payable
         // TODO: check not already exists
         // TODO: require a security deposit
+        // payable
         returns (bytes32 makerId)
     {
-        address makerAddr = msg.sender;
+        address payable makerAddr = msg.sender;
         makerId = keccak256(
             abi.encodePacked(
                 makerAddr,
@@ -224,7 +243,7 @@ contract Gateway is ChainlinkClient, Ownable {
             this.fulfillMakerRegister.selector
         );
 
-        req.add("method", "newMaker");
+        // req.add("method", "newMaker");
         req.addBytes("public_account", abi.encodePacked(makerAddr));
         req.addBytes("maker_id", abi.encodePacked(makerId));
         req.addBytes("crypto", abi.encodePacked(_crypto));
@@ -234,20 +253,26 @@ contract Gateway is ChainlinkClient, Ownable {
 
         sendChainlinkRequestTo(fpm.oracleAddr, req, ORACLE_PAYMENT);
 
-        makers[makerId] = Maker(makerAddr, _fiatPaymentMethodIdx, _crypto, _fiat, true);
-        emit LogGatewayMakerRegistered(makerId, makerAddr, _crypto, _fiat);
+        makers[makerId] = Maker(makerAddr, _fiatPaymentMethodIdx, _crypto, _fiat, false);
+
+        emit LogGatewayMakerRegister(makerId, makerAddr, _crypto, _fiat);
     }
 
     /// @notice Called by the Oracle when newMaker has been fulfilled.
-    /// @param _fiatPaymentMethodIdx Index into fiatPaymentMethods
-    /// @return makerId Maker ID hash for this market pair and method.
+    /// @param _requestId Chainlink request id to verify
+    /// @param _makerId Id of the maker.
     function fulfillMakerRegister(
-        uint256 _fiatPaymentMethodIdx
+        bytes32 _requestId,
+        bytes32 _makerId
     )
-       external
-       returns (bytes32 makerId)
+        external
+        recordChainlinkFulfillment(_requestId)
     {
-        revert("not yet implemented");
+        bool success = _makerId != 0x0;
+        if (success) {
+            makers[_makerId].activated = true;
+        }
+        emit LogGatewayMakerRegisterFulfilled(_makerId, success);
     }
 
 
@@ -261,7 +286,7 @@ contract Gateway is ChainlinkClient, Ownable {
     /// @param _amount Amount of crypto to buy (in wei if ETH or in decimals()
     ///                for an ERC20 token)
     /// @param _fiatPaymentMethodIdx Index into fiatPaymentMethods
-    /// @return bytes32 orderId for the new order
+    /// @return bytes32 orderId for the new order (we use the Oracle request id)
     function buyCryptoOrderCreate(
         address _crypto,
         string calldata _fiat,
@@ -273,9 +298,9 @@ contract Gateway is ChainlinkClient, Ownable {
     {
         address taker = msg.sender;
 
-        orderId = keccak256(
-            abi.encodePacked(taker, _crypto, _fiat, _amount)
-        );
+        // orderId = keccak256(
+        //     abi.encodePacked(taker, _crypto, _fiat, _amount)
+        // );
 
         // TODO: check order doesn't exist already
 
@@ -288,21 +313,24 @@ contract Gateway is ChainlinkClient, Ownable {
             this.fulfillBuyCryptoOrder.selector
         );
 
-        req.add("method", "buyCryptoOrder");
+        // req.add("method", "buyCryptoOrder");
         req.addBytes("buyer_address", abi.encodePacked(taker));
-        req.addBytes("order_id", abi.encodePacked(orderId));
+        // req.addBytes("order_id", abi.encodePacked(orderId));
         req.addUint("order_amount", _amount);
         req.addBytes("crypto", abi.encodePacked(_crypto));
         req.add("fiat", _fiat);
 
-        sendChainlinkRequestTo(fpm.oracleAddr, req, ORACLE_PAYMENT);
+        orderId = sendChainlinkRequestTo(fpm.oracleAddr, req, ORACLE_PAYMENT);
 
         buyOrders[orderId] = Order(
             taker,
             _crypto,
             _fiat,
+            _fiatPaymentMethodIdx,
             _amount,
-            _fiatPaymentMethodIdx
+            0,
+            "",
+            false
         );
 
         emit LogGatewayBuyCryptoOrderCreated(
@@ -310,21 +338,23 @@ contract Gateway is ChainlinkClient, Ownable {
             orderId,
             _crypto,
             _fiat,
-            _amount,
-            _fiatPaymentMethodIdx
+            _fiatPaymentMethodIdx,
+            _amount
         );
 
         return orderId;
     }
 
     /// @notice Called by the Oracle when buyCryptoOrder has been fulfilled.
-    /// @param _fiatPaymentMethodIdx Index into fiatPaymentMethods
+    /// @param _requestId Chainlink request id to verify
+    /// @param _orderId Buy order id or 0x0 on failure
     /// @return makerId Maker ID hash for this market pair and method.
     function fulfillBuyCryptoOrder(
-        uint256 _fiatPaymentMethodIdx
+        bytes32 _requestId,
+        bytes32 _orderId
     )
        external
-       returns (bytes32 orderId)
+       recordChainlinkFulfillment(_requestId)
     {
         revert("not yet implemented");
     }
@@ -348,13 +378,9 @@ contract Gateway is ChainlinkClient, Ownable {
         returns (bytes32 orderId)
     {
         address seller = msg.sender;
-
         uint amount = msg.value;
-        orderId = keccak256(
-            abi.encodePacked(seller, _crypto, _fiat, amount)
-        );
 
-        // TODO: check order doesn't exist already
+        escrows[seller].add(amount);
 
         FiatPaymentMethod storage fpm = fiatPaymentMethods[_fiatPaymentMethodIdx];
 
@@ -365,95 +391,60 @@ contract Gateway is ChainlinkClient, Ownable {
             this.fulfillSellCryptoOrder.selector
         );
 
-        req.add("method", "sellCryptoOrder");
+        // req.add("method", "sellCryptoOrder");
         req.addBytes("seller_address", abi.encodePacked(seller));
-        req.addBytes("order_id", abi.encodePacked(orderId));
+        // req.addBytes("order_id", abi.encodePacked(orderId));
         req.addUint("order_amount", amount);
         req.addBytes("crypto", abi.encodePacked(_crypto));
         req.add("fiat", _fiat);
         req.add("destination_ipfs_hash", _destinationIpfsHash);
 
-        sendChainlinkRequestTo(fpm.oracleAddr, req, ORACLE_PAYMENT);
+        orderId = sendChainlinkRequestTo(fpm.oracleAddr, req, ORACLE_PAYMENT);
 
         sellOrders[orderId] = Order(
             seller,
             _crypto,
             _fiat,
+            _fiatPaymentMethodIdx,
             amount,
-            _fiatPaymentMethodIdx
+            0,
+            "",
+            false
         );
 
         emit LogGatewaySellCryptoOrder(
-            seller,
             orderId,
+            seller,
             _crypto,
             _fiat,
-            amount,
-            _fiatPaymentMethodIdx
+            _fiatPaymentMethodIdx,
+            amount
         );
 
         return orderId;
     }
 
-// fulfillSellCryptoOrder(orderId, priceUsed, makerAddress, encrypted(payoutId))
-//        sends crypto from escrow to makers address
-//        update the order with priceUsed and the payoutId
-
     /// @notice Called by the Oracle when sellCryptoOrder has been fulfilled.
-    /// @param _orderId Order Id of the sale
-    /// @param _priceUsed Price used for the order
-    /// @param _payoutId Fiat payment network payout id
-    /// @param _buyerAddr Buyers address - send the crypto here
+    /// @param _requestId Chainlink request id to verify
+    /// @param _makerId Maker who filled the order or 0 if failed
     function fulfillSellCryptoOrder(
-        bytes32 _orderId,
-        uint256 _priceUsed,
-        // TODO: encrypt with the seller account
-        string calldata _payoutId,
-        address _buyerAddr
+        bytes32 _requestId,
+        bytes32 _makerId
     )
        external
+       recordChainlinkFulfillment(_requestId)
     {
-        // TODO: send crypto from escrow to buyer address
-        //       add priceUsed and payoutId to the order details
+        Order storage order = sellOrders[_requestId];
+        order.payed = _makerId != 0x0;
 
-        revert("not yet implemented");
-    }
+        // On successful payment send the maker the sold crypto.
+        if (order.payed == true) {
+            Maker storage maker = makers[_makerId];
+            escrows[order.taker].sub(order.amount);
+            maker.makerAddr.transfer(order.amount);
+        }
 
-
-
-
-    /* ------------------------------------------------------
-     *    Payout Functions
-     * ------------------------------------------------------ */
-
-    function payout(
-        address _oracle,
-        string calldata _jobId,
-        uint amount,
-        string calldata receiver
-    )
-        external
-        onlyOwner
-    {
-        Chainlink.Request memory req = buildChainlinkRequest(
-            stringToBytes32(_jobId),
-            address(this),
-            this.fulfillPayout.selector
-        );
-        req.add("method", "sendPayout");
-        req.addUint("amount", amount);
-        req.add("currency", "AUD");
-        req.add("receiver", receiver);
-        sendChainlinkRequestTo(_oracle, req, ORACLE_PAYMENT);
-    }
-
-
-    function fulfillPayout(bytes32 _requestId, bool _result)
-        public
-        recordChainlinkFulfillment(_requestId)
-    {
-        emit LogPayoutFulfilled(_requestId, _result);
-        payoutResult = _result;
+        emit LogGatewaySellCryptoCompleted(_requestId, order.payed);
     }
 
 

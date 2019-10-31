@@ -11,7 +11,7 @@
     "deploy-staging": "yarn build && sls deploy -s staging --verbose",
     "lint": "tslint -p .",
     "run-local-send-payout": "scripts/run-local-send-payout",
-    "test": "mocha -r ts-node/register src/**/*.spec.ts"
+    "test": "scripts/test"
   },
   "dependencies": {
     "eth-crypto": "^1.5.0",

@@ -1,6 +1,11 @@
+import BigNumber from 'bignumber.js'
 import EthCrypto, { Encrypted } from 'eth-crypto'
 import IPFS from 'ipfs-http-client'
 import * as paypal from 'paypal-rest-sdk'
+
+/**************************************************
+ * Request and Response Types
+ *************************************************/
 
 class Response {
   jobRunID: string
@@ -38,8 +43,8 @@ export class SendPayoutRequest extends Request {
 export class NewMakerRequest extends Request {
   public_account: string
   maker_id: string
-  fiat: string
   crypto: string
+  fiat: string
   reserve_amount: string
   destination: string
   api_creds_ipfs_hash: string
@@ -58,8 +63,8 @@ export class BuyCryptoOrderRequest extends Request {
   buyer_address: string
   order_id: string
   order_amount: string
-  fiat: string
   crypto: string
+  fiat: string
 }
 
 export class BuyCryptoOrderPayedRequest extends Request {
@@ -72,25 +77,102 @@ export class BuyCryptoOrderPayedRequest extends Request {
 
 export class SellCryptoOrderRequest extends Request {
   seller_address: string
-  order_id: string
-  order_amount: string
-  fiat: string
+  order_amount: string // crypto amount in wei
   crypto: string
+  fiat: string
   destination_ipfs_hash: string
 }
 
+/**************************************************
+ * Environment
+ *************************************************/
+
 const {CLIENT_ID, CLIENT_SECRET, STAGE} = process.env
+
+const isLive = STAGE === 'live'
+const isTest = STAGE === 'test'
+
+/**************************************************
+ * Logging helpers
+ *************************************************/
+
+const loggingOn = !isTest
+
+const log = (msg) => {
+  if (loggingOn === true) { console.log(msg) }
+}
+const logError = (msg) => {
+  if (loggingOn === true) { console.error(msg) }
+}
+
+/**************************************************
+ * Decryption helpers
+ *************************************************/
+
+const privateKey = process.env.PRIVATE_KEY as string
+
+/**
+ * Given a Buffer of an Encrypted record, decrypt the content with the adapters
+ * private key and return the contents as a string.
+ *
+ * @param buf Buffer to an EthCrypto Encrypted record
+ * @return Buffer decrypted and converted to a string
+ */
+const decryptBuffer = (buf: Buffer): Promise<string> => {
+  const encryptedRec: Encrypted = JSON.parse(buf.toString())
+  return EthCrypto.decryptWithPrivateKey(
+    privateKey,
+    encryptedRec,
+  )
+}
+
+/**************************************************
+ * IPFS helpers
+ *************************************************/
+
+const ipfs = IPFS('ipfs.infura.io', '5001', {protocol: 'https'})
+
+/**
+ * Retrieve Buffer of content for a given IPFS hash
+ *
+ * @param hash IPFS content hash
+ */
+const ipfsGet = (hash): Buffer => ipfs.get(hash).then(
+  (ipfsRsp) => ipfsRsp[0].content,
+)
+
+/**
+ * Given an ipfs hash for an EthCrypto Encrypted record, fetch it and decrypt
+ * it using the adapters key. Then return the contents as a string.
+ * @param hash ipfs hash to Encrypted record
+ * @return string of decrypted content
+ */
+const ipfsGetAndDecrypt = async (hash): Promise<string> => {
+  const buf: Buffer = await ipfsGet(hash)
+  return decryptBuffer(buf)
+}
+
+/**************************************************
+ * Globals and State
+ *************************************************/
+
+const ONE_ETH_IN_WEI = new BigNumber('10e18')
 
 // Store makers in memory for now - map of makerId to Maker
 // TODO: persist it
 const makers = {}
 
 paypal.configure({
-  mode: STAGE === 'live' ? 'live' : 'sandbox',
+  mode: isLive === true ? 'live' : 'sandbox',
   client_id: CLIENT_ID,
   client_secret: CLIENT_SECRET,
 })
 
+/**
+ * Send a Paypal Payout to a given receiver.
+ *
+ * @param data {SendPayoutRequest} Details of receiver, amount, etc.
+ */
 const sendPayout = async (data: SendPayoutRequest) => {
   return new Promise((resolve, reject) => {
     if (!('amount' in data) || !('receiver' in data)) {
@@ -100,6 +182,7 @@ const sendPayout = async (data: SendPayoutRequest) => {
     const sender_batch_id = Math.random()
       .toString(36)
       .substring(9)
+
     const payoutItem = {
       sender_batch_header: {
         sender_batch_id,
@@ -111,7 +194,7 @@ const sendPayout = async (data: SendPayoutRequest) => {
           recipient_type: data.recipient_type || 'EMAIL',
           amount: {
             value: data.amount,
-            currency: data.currency || 'USD',
+            currency: data.currency || 'AUD',
           },
           receiver: data.receiver,
           note: data.note || '',
@@ -129,6 +212,11 @@ const sendPayout = async (data: SendPayoutRequest) => {
   })
 }
 
+/**
+ * Get details of a Paypal given a payout id.
+ *
+ * @param data {GetPayoutRequest} Record containing the payout id
+ */
 const getPayout = async (data: GetPayoutRequest) => {
   return new Promise((resolve, reject) => {
     if (!('payout_id' in data)) {
@@ -157,32 +245,34 @@ const getPayout = async (data: GetPayoutRequest) => {
   })
 }
 
-const newMaker = async (data: NewMakerRequest) => {
-  return new Promise(async (resolve, reject) => {
-    const ipfs = IPFS('ipfs.infura.io', '5001', {protocol: 'https'})
-    const ipfsRsp = await ipfs.get(data.api_creds_ipfs_hash)
-    const apiCredsBuf = ipfsRsp[0].content
-    const apiCredsEncrypted = JSON.parse(apiCredsBuf.toString())
-    console.log(`got encrypted creds: ${JSON.stringify(apiCredsEncrypted)}`)
-
-    // const encryptedStr = EthCrypto.cipher.stringify(apiCredsEncrypted)
-    const privateKey = process.env.PRIVATE_KEY as string
-    const apiCredsStr = await EthCrypto.decryptWithPrivateKey(
-      privateKey,
-      apiCredsEncrypted,
-    )
+/**
+ * Register a new maker / liquidity provider.
+ *
+ * @param data {NewMakerRequest} Record containing the makers details.
+ */
+const newMaker = async (data: NewMakerRequest) =>
+  new Promise(async (resolve, reject) => {
+    const apiCredsStr = await ipfsGetAndDecrypt(data.api_creds_ipfs_hash)
     const apiCreds = JSON.parse(apiCredsStr)
 
     const maker: Maker = {...data, api_creds: apiCreds}
-    console.log(`Adding maker: ${JSON.stringify(maker, null, 2)}`)
+    log(`Adding maker: ${JSON.stringify(maker, null, 2)}`)
     makers[maker.maker_id] = maker
 
-    return resolve({ statusCode: 201, data: {makerId: data.maker_id} })
+    return resolve({ statusCode: 201, data: {maker_id: data.maker_id} })
   })
-}
 
-const buyCryptoOrder = async (data: BuyCryptoOrderRequest) => {
-  return new Promise((resolve, reject) => {
+/**
+ * Buy orders require 2 steps from the taker. This is the first step.
+ * A taker registers to make a buy order with this call and a maker is selected.
+ * After this call the taker will pay the maker over the paypal network and
+ * then call the second function buyCryptoOrderPayed to finalise the order.
+ *
+ * @param data {BuyCryptoOrderRequest} Record containing details of the buy
+ *             order
+ */
+const buyCryptoOrder = async (data: BuyCryptoOrderRequest) =>
+  new Promise((resolve, reject) => {
     // pick the first Maker off the list
     // TODO: implement a queue and choose in rotation
     const makerId = Object.keys(makers)[0]
@@ -203,8 +293,16 @@ const buyCryptoOrder = async (data: BuyCryptoOrderRequest) => {
       },
     })
   })
-}
 
+/**
+ * Buy orders require 2 steps from the taker. This is the second step.
+ * After a taker has payed a selected maker the fiat over the Paypal network,
+ * this function will be called to check the payment and return if the payment
+ * is seen. The smart contract will release the crypto if it is.
+ *
+ * @param data {BuyCryptoOrderPayedRequest} Record containing the payout_id of
+ *             the fiat payment.
+ */
 const buyCryptoOrderPayed = async (data: BuyCryptoOrderPayedRequest) => {
   return new Promise(async (resolve, reject) => {
     // the maker pre selected to fill the order
@@ -226,43 +324,77 @@ const buyCryptoOrderPayed = async (data: BuyCryptoOrderPayedRequest) => {
   })
 }
 
-const sellCryptoOrder = async (data: SellCryptoOrderRequest) => {
-  return new Promise((resolve, reject) => {
+/**
+ * Executes the fiat part of a Sell crypto order. A seller transfers their
+ * crypto to the FiatGateway smart contract. Then ChainLink calls this function
+ * to select a Maker and transfer the fiat to the sellers Paypal account. The
+ * result is returned to the smart contract. If success the crypto is sent to
+ * the Maker.
+ *
+ * @param data {SellCryptoOrderRequest} Record containing the sell details
+ */
+const sellCryptoOrder = (data: SellCryptoOrderRequest) =>
+  new Promise(async (resolve, reject) => {
     // pick the first Maker off the list
     // TODO: implement a queue and choose in rotation
     const makerId = Object.keys(makers)[0]
     const maker: Maker = makers[makerId]
 
-    // TODO: check liquidity of selected maker to cover the order
+    // decrypt the takers paypal destination
+    const destination = await ipfsGetAndDecrypt(data.destination_ipfs_hash)
+    log(`taker destination decrypted: ${destination}`)
 
-    // TODO: grab the price from an aggregated feed
-    // (poss this should be requested from the contract ...?)
-    const price = '123.45'
+    // TODO: grab the price from an aggregated feed and have it passed in
+    // so it's transparent on chain
+    const price = new BigNumber('267.19')
 
-      // TODO: payout:
-    const payoutId = 'xyz'
+    // Calculate the fiat amount
+    const cryptoAmount: BigNumber =
+      new BigNumber(data.order_amount).div(ONE_ETH_IN_WEI)
+    const fiatAmount: BigNumber = cryptoAmount.times(price)
 
-    return resolve({
-      statusCode: 201,
-      data: {
-        order_id: data.order_id,
-        price,
-        payout_id: payoutId,
-        buyer_address: maker.public_account,
-      },
-    })
+    // Payout to the seller
+    const sendPayoutRequest = ({
+      method: 'sendPayout',
+      amount: fiatAmount.toString(),
+      currency: data.fiat,
+      receiver: data.destination_ipfs_hash,
+    } as SendPayoutRequest)
+
+    const rsp: any = await sendPayout(sendPayoutRequest)
+
+    if (rsp.statusCode === 201) {
+      log(`sellCryptoOrder: payout succeeded with id: ${rsp.data.result}`)
+      return resolve({
+        statusCode: 201,
+        data: {
+          maker_id: makerId,
+        },
+      })
+    } else {
+      logError(
+        `sellCryptoOrder: payout failed with error: ` +
+        `${JSON.stringify(rsp.data)} and status code: ${rsp.statusCode}`,
+      )
+      return reject({
+        statusCode: rsp.statusCode,
+        data: {
+          // how does the node convert this ..?
+          maker_id: undefined,
+        },
+      })
+    }
   })
-}
 
 const createRequest = async (input: JobRequest) => {
-  console.log(`input: ${JSON.stringify(input, null, 2)}`)
+  log(`input: ${JSON.stringify(input, null, 2)}`)
 
   return new Promise((resolve, reject) => {
     const data = input.data
     const method = data.method || ''
 
     const handlePayoutResponse = (response: any) => {
-      console.log(
+      log(
       `${method} response: ${JSON.stringify(response, null, 2)}`,
         )
       response.data.result =
@@ -271,7 +403,7 @@ const createRequest = async (input: JobRequest) => {
     }
 
     const handleResponse = (response: any) => {
-      console.log(
+      log(
       `${method} response: ${JSON.stringify(response, null, 2)}`,
         )
       return resolve(response)
@@ -302,6 +434,12 @@ const createRequest = async (input: JobRequest) => {
           .catch(reject)
         break
 
+      case 'sellcryptoorder':
+        sellCryptoOrder(data as SellCryptoOrderRequest)
+          .then(handleResponse)
+          .catch(reject)
+        break
+
       default:
         return reject({ statusCode: 400, data: 'Invalid method' })
     }
@@ -319,8 +457,10 @@ const requestWrapper = async (req: JobRequest): Promise<Response> => {
         resolve(response)
       })
       .catch((err) => {
-        console.error(`createRequest failure: ${err.message}`)
-        console.error(`stack: ${err.stack}`)
+        logError(err)
+        if (err.stack) {
+          logError(`stack: ${err.stack}`)
+        }
 
         const { statusCode, data } = err
         response.status = 'errored'

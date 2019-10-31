@@ -159,22 +159,28 @@ contract('Gateway', accounts => {
     })
   })
 
-  describe('#makerRegister', () => {
-    beforeEach(async () => oneLinkToGateway(makerAddr))
+  describe('maker registration', () => {
+    describe('#makerRegister', () => {
+      beforeEach(async () => oneLinkToGateway(makerAddr))
 
-    it('registers new maker', async () => {
-      const {methodIdx} = await addFiatPaymentMethod()
-      const {makerRec, tx} = await makerRegister(methodIdx)
+      it('registers new maker', async () => {
+        const {methodIdx} = await addFiatPaymentMethod()
+        const {makerRec, tx} = await makerRegister(methodIdx)
 
-      assert.equal(makerRec.makerAddr, makerAddr, 'makerAddr is the tx caller')
-      assert.equal(makerRec.fiatPaymentMethodIdx.toString(), methodIdx.toString(), 'fiat payment method correct')
-      assert.equal(makerRec.crypto, nativeEthAddress, 'crypto should be native eth')
-      assert.equal(makerRec.fiat, "AUD", 'fiat is AUD')
-      assert.isTrue(makerRec.active, 'maker active')
+        assert.equal(makerRec.makerAddr, makerAddr, 'makerAddr is the tx caller')
+        assert.equal(makerRec.fiatPaymentMethodIdx.toString(), methodIdx.toString(), 'fiat payment method correct')
+        assert.equal(makerRec.crypto, nativeEthAddress, 'crypto should be native eth')
+        assert.equal(makerRec.fiat, "AUD", 'fiat is AUD')
+        assert.isFalse(makerRec.activated, 'maker not yet active')
 
-      request = h.decodeRunRequest(tx.receipt.rawLogs[2])
-      assert.equal(oracleAddr, tx.receipt.rawLogs[2].address)
-      assert.equal(request.topic, EVENT_ORACLE_REQUEST)
+        request = h.decodeRunRequest(tx.receipt.rawLogs[2])
+        assert.equal(oracleAddr, tx.receipt.rawLogs[2].address)
+        assert.equal(request.topic, EVENT_ORACLE_REQUEST)
+      })
+    })
+
+    describe.skip('#makerRegisterFulfilled', () => {
+      // todo
     })
   })
 
@@ -216,7 +222,7 @@ contract('Gateway', accounts => {
     })
   })
 
-  describe.only('#sellCryptoOrder', () => {
+  describe('#sellCryptoOrder', () => {
     beforeEach(async () => Promise.all([
       oneLinkToGateway(makerAddr), // for makerRegister
       oneLinkToGateway(sellerAddr) // for sellCryptoOrder
@@ -258,58 +264,73 @@ contract('Gateway', accounts => {
     })
   })
 
-  // describe('#fulfill', () => {
-  //   const expected = 50000
-  //   const response = web3.utils.toHex(expected)
-  //   let request
+  describe('#fulfillSellCryptoOrder', () => {
+    const cryptoAmount = oneETH
+    const destinationIpfsHash = 'QmeYYwD4y4DgVVdAzhT7wW5vrvmbKPQj8wcV2pAzjbj886'
 
-  //   beforeEach(async () => {
-  //     await link.transfer(gateAddr, oneLINK)
-  //     const tx = await gate.createRequestTo(
-  //       oracleAddr,
-  //       jobIdHex,
-  //       payment,
-  //       url,
-  //       path,
-  //       times,
-  //       { from: seller },
-  //     )
-  //     request = h.decodeRunRequest(tx.receipt.rawLogs[3])
-  //     await h.fulfillOracleRequest(oracle, request, response, { from: oracleAddr })
-  //   })
+    const expected = 50000
+    const response = web3.utils.toHex(expected)
 
-  //   it('records the data given to it by the oracle', async () => {
-  //     const currentPrice = await gate.data.call()
-  //     assert.equal(
-  //       web3.utils.toHex(currentPrice),
-  //       web3.utils.padRight(expected, 64),
-  //     )
-  //   })
+    let orderId
+    let runRequest
 
-  //   context('when my contract does not recognize the request ID', () => {
-  //     const otherId = web3.utils.toHex('otherId')
+    beforeEach(async () => {
+      oneLinkToGateway(makerAddr), // for makerRegister
+        oneLinkToGateway(sellerAddr) // for sellCryptoOrder
 
-  //     beforeEach(async () => {
-  //       request.id = otherId
-  //     })
+      // create sell order
+      const {methodIdx} = await addFiatPaymentMethod()
+      await makerRegister(methodIdx)
+      const tx = await gate.sellCryptoOrder(
+        nativeEthAddress,
+        "AUD",
+        methodIdx,
+        destinationIpfsHash,
+        {
+          from: sellerAddr,
+          value: cryptoAmount
+        }
+      )
+      orderId = tx.logs[1].args.orderId
 
-  //     it('does not accept the data provided', async () => {
-  //       await expectRevert.unspecified(
-  //         h.fulfillOracleRequest(oracle, request, response, {
-  //           from: oracleAddr,
-  //         }),
-  //       )
-  //     })
-  //   })
+      // create sell order
+      runRequest = h.decodeRunRequest(tx.receipt.rawLogs[2])
+    })
 
-  //   context('when called by anyone other than the oracle contract', () => {
-  //     it('does not accept the data provided', async () => {
-  //       await expectRevert.unspecified(
-  //         gate.fulfill(request.id, response, { from: maker }),
-  //       )
-  //     })
-  //   })
-  // })
+    // it('records the data given to it by the oracle', async () => {
+    //   await h.fulfillOracleRequest(oracle, runRequest, response, {from: oracleAddr})
+
+    //   const currentPrice = await gate.data.call()
+    //   assert.equal(
+    //     web3.utils.toHex(currentPrice),
+    //     web3.utils.padRight(expected, 64),
+    //   )
+    // })
+
+    // context('when my contract does not recognize the request ID', () => {
+    //   const otherId = web3.utils.toHex('otherId')
+
+    //   beforeEach(async () => {
+    //     runRequest.id = otherId
+    //   })
+
+    //   it('does not accept the data provided', async () => {
+    //     await expectRevert.unspecified(
+    //       h.fulfillOracleRequest(oracle, runRequest, response, {
+    //         from: oracleAddr,
+    //       }),
+    //     )
+    //   })
+    // })
+
+    // context('when called by anyone other than the oracle contract', () => {
+    //   it('does not accept the data provided', async () => {
+    //     await expectRevert.unspecified(
+    //       gate.fulfillOracleRequest(runRequest.id, response, {from: makerAddr}),
+    //     )
+    //   })
+    // })
+  })
 
   describe('#withdrawLink', () => {
     beforeEach(async () => {
