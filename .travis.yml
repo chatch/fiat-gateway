@@ -10,3 +10,7 @@ cache:
 script:
   - cd protocol
   - npm ci
+  - npm test
+  - cd ../adapters/fiat-gateway-paypal
+  - npm ci
+  
