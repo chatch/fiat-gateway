@@ -1,5 +1,7 @@
 # Crypto Fiat Gateway on Ethereum using Chainlink Oracles
 
+[![Build Status](https://travis-ci.org/chatch/fiat-gateway.svg?branch=master)](https://travis-ci.org/0xFutures/protocol)
+
 ## Overview
 
 This fiat gateway provides a fast and decentralized way to sell crypto for fiat and vice versa.
@@ -20,7 +22,11 @@ An alternative to localethereum amd centralized fiat payment gateways like my ow
 - [x] Paypal Fiat Payments
 - [ ] WeChat Pay Fiat Payments
 - [ ] SEPA Fiat Payments
-- [x] Encrypted fiat payment destination
+- [x] Encrypted Taker fiat payment destination
+- [ ] Encrypted Maker fiat payment destination
+- [x] Encrypted Maker api credentials
+- [ ] gateway.js API interface (see Gateway_test.js interacting for now)
+- [ ] DApp UI
 
 ## How it Works
 
