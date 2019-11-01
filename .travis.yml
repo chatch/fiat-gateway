@@ -20,5 +20,5 @@ script:
   - npm test
   - cd ../adapters/fiat-gateway-paypal
   - yarn install
-  - npm build
+  - yarn run build
   # - npm test # once encrypted api key env vars are installed
