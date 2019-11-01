@@ -2,6 +2,10 @@
 
 [![Build Status](https://travis-ci.org/chatch/fiat-gateway.svg?branch=master)](https://travis-ci.org/chatch/fiat-gateway)
 
+see also:
+- [protocol/ README](https://github.com/chatch/fiat-gateway/blob/master/protocol/README.md)
+- [adapter/ README](https://github.com/chatch/fiat-gateway/blob/master/adapters/fiat-gateway-paypal/README.md)
+
 ## Overview
 
 This fiat gateway provides a fast and decentralized way to sell crypto for fiat and vice versa.
@@ -12,8 +16,15 @@ A pool of Makers provide fiat and crypto liquidity to the system. They receive a
 
 A Taker buys crypto for fiat or fiat for crypto. They get the current market price minus a fixed Makers fee.
 
-An alternative to localethereum amd centralized fiat payment gateways like my own CoinHatch Australia:
-..... TODO: fill in differences here
+Differences from localethereum:
+- fiat payments for sells are executed by Oracles
+- fiat payments for buys are executed outside the system but are checked by Oracles before crypto is released
+- trades are direct swaps with fixed fees (there is no order book)
+
+Differences from traditional centralized gateways:
+- transparency - orders are initiated and finalised on chain
+- peer to peer - registered Makers to any Taker
+- trusted Oracles (later can be trustless with a TEE deployment) executing payment network transactions
 
 ## Features
 
