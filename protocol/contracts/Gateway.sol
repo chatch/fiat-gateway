@@ -23,7 +23,9 @@ contract Gateway is ChainlinkClient, Ownable {
         uint256 fiatPaymentMethodIdx;
         address crypto;    // ERC20 address or ETH_ADDRESS
         string fiat;       // ISO 4217 currency code
+        uint256 reserveAmount; // Amount deposited so far by the Maker
         bool activated;
+        bool exists;
     }
 
     /*
@@ -145,11 +147,23 @@ contract Gateway is ChainlinkClient, Ownable {
     );
 
     /* ------------------------------------------------------
-     *  Solidity error reasons
+     *  Error reasons
      * ------------------------------------------------------ */
 
     string constant REASON_MAKER_ALREADY_EXISTS = "Maker already exists";
     string constant REASON_OFFER_ALREADY_PLACED = "Order already placed";
+    string constant REASON_MUST_SEND_ETH = "ETH must be sent";
+
+
+    /* ------------------------------------------------------
+     *  Modifiers
+     * ------------------------------------------------------ */
+
+    modifier valueNonZero()
+    {
+        require(msg.value > 0, REASON_MUST_SEND_ETH);
+        _;
+    }
 
 
     /// @notice Create the contract with a specified address for the LINK
@@ -219,12 +233,13 @@ contract Gateway is ChainlinkClient, Ownable {
         string calldata _ipfsHash
     )
         external
-        // TODO: check not already exists
-        // TODO: require a security deposit
-        // payable
+        payable
+        valueNonZero()
         returns (bytes32 makerId)
     {
         address payable makerAddr = msg.sender;
+        uint256 reserveAmount = msg.value;
+
         makerId = keccak256(
             abi.encodePacked(
                 makerAddr,
@@ -233,6 +248,8 @@ contract Gateway is ChainlinkClient, Ownable {
                 _fiat
             )
         );
+
+        require(makers[makerId].exists == false, REASON_MAKER_ALREADY_EXISTS);
 
         FiatPaymentMethod storage fpm = fiatPaymentMethods[_fiatPaymentMethodIdx];
 
@@ -243,17 +260,25 @@ contract Gateway is ChainlinkClient, Ownable {
             this.fulfillMakerRegister.selector
         );
 
-        // req.add("method", "newMaker");
         req.addBytes("public_account", abi.encodePacked(makerAddr));
         req.addBytes("maker_id", abi.encodePacked(makerId));
         req.addBytes("crypto", abi.encodePacked(_crypto));
         req.add("fiat", _fiat);
         req.add("destination", _destination);
+        req.addUint("reserve_amount", reserveAmount);
         req.add("api_creds_ipfs_hash", _ipfsHash);
 
         sendChainlinkRequestTo(fpm.oracleAddr, req, ORACLE_PAYMENT);
 
-        makers[makerId] = Maker(makerAddr, _fiatPaymentMethodIdx, _crypto, _fiat, false);
+        makers[makerId] = Maker(
+            makerAddr,
+            _fiatPaymentMethodIdx,
+            _crypto,
+            _fiat,
+            msg.value,
+            false,
+            true
+        );
 
         emit LogGatewayMakerRegister(makerId, makerAddr, _crypto, _fiat);
     }
@@ -313,9 +338,7 @@ contract Gateway is ChainlinkClient, Ownable {
             this.fulfillBuyCryptoOrder.selector
         );
 
-        // req.add("method", "buyCryptoOrder");
         req.addBytes("buyer_address", abi.encodePacked(taker));
-        // req.addBytes("order_id", abi.encodePacked(orderId));
         req.addUint("order_amount", _amount);
         req.addBytes("crypto", abi.encodePacked(_crypto));
         req.add("fiat", _fiat);
@@ -391,9 +414,7 @@ contract Gateway is ChainlinkClient, Ownable {
             this.fulfillSellCryptoOrder.selector
         );
 
-        // req.add("method", "sellCryptoOrder");
         req.addBytes("seller_address", abi.encodePacked(seller));
-        // req.addBytes("order_id", abi.encodePacked(orderId));
         req.addUint("order_amount", amount);
         req.addBytes("crypto", abi.encodePacked(_crypto));
         req.add("fiat", _fiat);

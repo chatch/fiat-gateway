@@ -101,7 +101,7 @@ contract('Gateway', accounts => {
       makerApiCredsIpfsHash,
       {
         from: makerAddr,
-        // value: web3.utils.toWei(10, 'ether')
+        value: oneETH.mul(new BN(5))
       }
     )
     const makerId = tx.logs[1].args.makerId
@@ -171,7 +171,9 @@ contract('Gateway', accounts => {
         assert.equal(makerRec.fiatPaymentMethodIdx.toString(), methodIdx.toString(), 'fiat payment method correct')
         assert.equal(makerRec.crypto, nativeEthAddress, 'crypto should be native eth')
         assert.equal(makerRec.fiat, "AUD", 'fiat is AUD')
+        assert.equal(makerRec.reserveAmount.toString(), oneETH.mul(new BN(5)).toString(), 'reserve amount')
         assert.isFalse(makerRec.activated, 'maker not yet active')
+        assert.isTrue(makerRec.exists, 'exists set')
 
         request = h.decodeRunRequest(tx.receipt.rawLogs[2])
         assert.equal(oracleAddr, tx.receipt.rawLogs[2].address)
