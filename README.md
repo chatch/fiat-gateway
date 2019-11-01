@@ -1,6 +1,6 @@
 # Crypto Fiat Gateway on Ethereum using Chainlink Oracles
 
-[![Build Status](https://travis-ci.org/chatch/fiat-gateway.svg?branch=master)](https://travis-ci.org/0xFutures/protocol)
+[![Build Status](https://travis-ci.org/chatch/fiat-gateway.svg?branch=master)](https://travis-ci.org/chatch/fiat-gateway)
 
 ## Overview
 
