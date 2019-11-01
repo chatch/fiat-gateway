@@ -1,6 +1,7 @@
 import BigNumber from 'bignumber.js'
 import EthCrypto, { Encrypted } from 'eth-crypto'
 import IPFS from 'ipfs-http-client'
+import fetch from 'node-fetch'
 import * as paypal from 'paypal-rest-sdk'
 
 /**************************************************
@@ -87,7 +88,12 @@ export class SellCryptoOrderRequest extends Request {
  * Environment
  *************************************************/
 
-const {CLIENT_ID, CLIENT_SECRET, STAGE} = process.env
+const {
+  CLIENT_ID,      // Paypal API id
+  CLIENT_SECRET,  // Paypal API secret
+  PRIVATE_KEY,    // Adapters EthCrypto key for decrypting sent data
+  STAGE,          // Deployment
+} = process.env
 
 const isLive = STAGE === 'live'
 const isTest = STAGE === 'test'
@@ -109,7 +115,7 @@ const logError = (msg) => {
  * Decryption helpers
  *************************************************/
 
-const privateKey = process.env.PRIVATE_KEY as string
+const privateKey = PRIVATE_KEY as string
 
 /**
  * Given a Buffer of an Encrypted record, decrypt the content with the adapters
@@ -153,6 +159,26 @@ const ipfsGetAndDecrypt = async (hash): Promise<string> => {
 }
 
 /**************************************************
+ * Paypal
+ *************************************************/
+
+const paypalMode = isLive === true ? 'live' : 'sandbox'
+
+const paypalConfigure = (maker?: Maker) => {
+  if (maker) {
+    paypalConfigureWithClient(maker.api_creds.id, maker.api_creds.sec)
+  } else {
+    paypalConfigureWithClient(CLIENT_ID, CLIENT_SECRET)
+  }
+}
+const paypalConfigureWithClient = (clientId, clientSecret) =>
+  paypal.configure({
+    mode: paypalMode,
+    client_id: clientId,
+    client_secret: clientSecret,
+  })
+
+/**************************************************
  * Globals and State
  *************************************************/
 
@@ -162,18 +188,14 @@ const ONE_ETH_IN_WEI = new BigNumber('10e18')
 // TODO: persist it
 const makers = {}
 
-paypal.configure({
-  mode: isLive === true ? 'live' : 'sandbox',
-  client_id: CLIENT_ID,
-  client_secret: CLIENT_SECRET,
-})
-
 /**
  * Send a Paypal Payout to a given receiver.
  *
  * @param data {SendPayoutRequest} Details of receiver, amount, etc.
  */
-const sendPayout = async (data: SendPayoutRequest) => {
+const sendPayout = async (data: SendPayoutRequest, maker?: Maker) => {
+  paypalConfigure(maker)
+
   return new Promise((resolve, reject) => {
     if (!('amount' in data) || !('receiver' in data)) {
       return reject({ statusCode: 400, data: 'missing required parameters' })
@@ -217,7 +239,9 @@ const sendPayout = async (data: SendPayoutRequest) => {
  *
  * @param data {GetPayoutRequest} Record containing the payout id
  */
-const getPayout = async (data: GetPayoutRequest) => {
+const getPayout = async (data: GetPayoutRequest, maker?: Maker) => {
+  paypalConfigure(maker)
+
   return new Promise((resolve, reject) => {
     if (!('payout_id' in data)) {
       return reject({ statusCode: 400, data: 'missing required parameters' })
@@ -344,14 +368,23 @@ const sellCryptoOrder = (data: SellCryptoOrderRequest) =>
     const destination = await ipfsGetAndDecrypt(data.destination_ipfs_hash)
     log(`taker destination decrypted: ${destination}`)
 
-    // TODO: grab the price from an aggregated feed and have it passed in
-    // so it's transparent on chain
-    const price = new BigNumber('267.19')
+    // TODO: grab the price from an aggregated feed Oracle and have it passed
+    // to the contract then passed to the adapter to complete the order.
+    // then the price source is transparent on chain
+
+    // For now fetch it directly ... :
+    const rspObj = await fetch(
+      'https://min-api.cryptocompare.com/data/price?fsym=ETH&tsyms=AUD',
+    ).then((rsp) => rsp.json())
+    const price = new BigNumber(rspObj.AUD)
 
     // Calculate the fiat amount
     const cryptoAmount: BigNumber =
       new BigNumber(data.order_amount).div(ONE_ETH_IN_WEI)
     const fiatAmount: BigNumber = cryptoAmount.times(price)
+
+    // TODO: subtract the fee
+    // const fee = ....
 
     // Payout to the seller
     const sendPayoutRequest = ({
@@ -361,7 +394,7 @@ const sellCryptoOrder = (data: SellCryptoOrderRequest) =>
       receiver: data.destination_ipfs_hash,
     } as SendPayoutRequest)
 
-    const rsp: any = await sendPayout(sendPayoutRequest)
+    const rsp: any = await sendPayout(sendPayoutRequest, maker)
 
     if (rsp.statusCode === 201) {
       log(`sellCryptoOrder: payout succeeded with id: ${rsp.data.result}`)
@@ -430,6 +463,12 @@ const createRequest = async (input: JobRequest) => {
 
       case 'buycryptoorder':
         buyCryptoOrder(data as BuyCryptoOrderRequest)
+          .then(handleResponse)
+          .catch(reject)
+        break
+
+      case 'buycryptoorderpayed':
+        buyCryptoOrderPayed(data as BuyCryptoOrderPayedRequest)
           .then(handleResponse)
           .catch(reject)
         break

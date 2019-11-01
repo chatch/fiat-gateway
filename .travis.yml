@@ -7,10 +7,18 @@ cache:
   directories:
     - protocol/node_modules
     - adapters/fiat-gateway-paypal/node_modules
+
+# env:
+#   - CLIENT_ID:
+#       secure: ""
+#   - CLIENT_SECRET:
+#       secure: ""
+
 script:
   - cd protocol
   - npm ci
   - npm test
   - cd ../adapters/fiat-gateway-paypal
-  - npm ci
-  
+  - yarn install
+  - npm build
+  # - npm test # once encrypted api key env vars are installed
