@@ -1,0 +1,12 @@
+dist: xenial
+language: node_js
+node_js:
+  - lts/*
+  - 10
+cache:
+  directories:
+    - protocol/node_modules
+    - adapters/fiat-gateway-paypal/node_modules
+script:
+  - cd protocol
+  - npm ci
