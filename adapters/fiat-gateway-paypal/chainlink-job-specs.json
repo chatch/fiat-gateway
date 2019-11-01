@@ -1,0 +1,29 @@
+{
+  "maker-register": {
+    "initiators": [{ "type": "runlog" }],
+    "tasks": [
+      { "type": "fiatgatewaypaypal", "params": { "method": "newMaker" } },
+      { "type": "jsonparse", "params": { "path": ["maker_id"] } },
+      { "type": "ethbytes32" },
+      { "type": "ethtx" }
+    ]
+  },
+
+  "sell-crypto-order": {
+    "initiators": [{ "type": "runlog" }],
+    "tasks": [
+      {
+        "type": "fiatgatewaypaypal",
+        "params": { "method": "sellCryptoOrder" }
+      },
+      { "type": "jsonparse", "params": { "path": ["maker_id"] } },
+      { "type": "ethbytes32" },
+      { "type": "ethtx" }
+    ]
+  },
+
+  "web-test-bridge": {
+    "initiators": [{ "type": "web" }],
+    "tasks": [{ "type": "testbridge" }]
+  }
+}
